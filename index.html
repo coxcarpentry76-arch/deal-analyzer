@@ -21,6 +21,14 @@
 <input id="rehab" type="number"><br><br>
 
 <label>Purchase Price:</label><br>
+  <label>Notes:</label><br>
+<textarea id="notes" rows="3"></textarea><br><br>
+
+<label>Estimated Rent:</label><br>
+<input id="rent" type="number"><br><br>
+
+<label>Interest Rate (%):</label><br>
+<input id="rate" type="number" value="7"><br><br>
 <input id="price" type="number"><br><br>
 
 <button onclick="analyze()">Analyze Deal</button>
@@ -54,7 +62,9 @@ function analyze() {
     let percentOfArv = (price / arv) * 100;
 
     let score = 0;
-
+let notes = document.getElementById("notes").value || "";
+let rent = parseFloat(document.getElementById("rent").value) || 0;
+let rate = (parseFloat(document.getElementById("rate").value) || 7) / 100;
     // ARV Score
     if (percentOfArv <= 50) score += 50;
     else if (percentOfArv <= 60) score += 40;
@@ -85,7 +95,14 @@ function analyze() {
     Score: ${score}/100<br><br>
     <b>${rating}</b>
     `;
-
+output += `
+<br><br>
+<b>--- BRRRR ---</b><br>
+Refi Value: $${refiValue.toFixed(0)}<br>
+Payment: $${payment.toFixed(0)}<br>
+Cash Flow: $${cashFlow.toFixed(0)}<br>
+Cash Left In Deal: $${cashLeft.toFixed(0)}
+`;
     document.getElementById("result").innerHTML = output;
 
     // SAVE TEMP DEAL
@@ -104,7 +121,14 @@ function analyze() {
 
 // SAVE DEAL
 function saveDeal() {
-    if (!window.lastDeal) {
+    if (!window.lastDeal) 
+      notes,
+rent,
+rate,
+refiValue,
+payment,
+cashFlow,
+cashLeft,
         alert("Analyze a deal first");
         return;
     }
@@ -119,7 +143,9 @@ function saveDeal() {
 
     renderDeals();
 }
-
+<i>${d.notes || ""}</i><br>
+Cash Flow: $${d.cashFlow.toFixed(0)}<br>
+Cash Left: $${d.cashLeft.toFixed(0)}<br>
 // CLEAR ALL DEALS
 function clearDeals() {
     localStorage.removeItem("deals");
