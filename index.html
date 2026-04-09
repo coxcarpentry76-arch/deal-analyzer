@@ -10,6 +10,9 @@
 
 <h2>DealStrike</h2>
 
+<h3>Dashboard</h3>
+<div id="dashboard"></div>
+
 <label>
 <input type="checkbox" id="quickMode" onchange="toggleMode()"> Quick Mode
 </label>
@@ -76,6 +79,38 @@ if (saved) {
     renderDeals();
 }
 
+// DASHBOARD
+function updateDashboard() {
+    if (deals.length === 0) {
+        document.getElementById("dashboard").innerHTML = "No deals yet";
+        return;
+    }
+
+    let total = deals.length;
+    let avgProfit = deals.reduce((sum, d) => sum + d.profit, 0) / total;
+    let best = Math.max(...deals.map(d => d.profit));
+    let cashFlowDeals = deals.filter(d => d.cashFlow > 0).length;
+
+    let statusCounts = {};
+    deals.forEach(d => {
+        statusCounts[d.status] = (statusCounts[d.status] || 0) + 1;
+    });
+
+    let statusHtml = "";
+    for (let s in statusCounts) {
+        statusHtml += `${s}: ${statusCounts[s]}<br>`;
+    }
+
+    document.getElementById("dashboard").innerHTML = `
+    Total Deals: ${total}<br>
+    Avg Profit: $${avgProfit.toFixed(0)}<br>
+    Best Deal: $${best.toFixed(0)}<br>
+    Cash Flow Deals: ${cashFlowDeals}<br><br>
+    <b>Pipeline:</b><br>
+    ${statusHtml}
+    `;
+}
+
 // TOGGLE MODE
 function toggleMode() {
     let quick = document.getElementById("quickMode").checked;
@@ -135,7 +170,6 @@ function analyze() {
     Profit: $${profit.toFixed(0)}<br>
     Score: ${score}<br>
     <b>${rating}</b><br><br>
-
     Cash Flow: $${cashFlow.toFixed(0)}<br>
     Cash Left: $${cashLeft.toFixed(0)}
     `;
@@ -162,7 +196,7 @@ function saveDeal() {
     renderDeals();
 }
 
-// UPDATE STATUS
+// STATUS UPDATE
 function updateStatus(index, newStatus) {
     deals[index].status = newStatus;
     localStorage.setItem("deals", JSON.stringify(deals));
@@ -216,6 +250,8 @@ function renderDeals() {
     });
 
     document.getElementById("dealsList").innerHTML = html;
+
+    updateDashboard();
 }
 </script>
 
