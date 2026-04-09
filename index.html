@@ -10,158 +10,106 @@
 
 <h2>DealStrike</h2>
 
-<h3>Dashboard</h3>
-<div id="dashboard"></div>
+<h3>Auto Deal Feed</h3>
+<div id="autoDeals"></div>
 
 <hr>
 
-<h3>📥 Bulk Import Deals</h3>
-<textarea id="bulkInput" rows="5" style="width:100%;" placeholder="123 Main St, 200000, 40000, 120000"></textarea><br><br>
-<button onclick="importDeals()">Import Deals</button>
-
-<hr>
-
-<label>
-<input type="checkbox" id="quickMode" onchange="toggleMode()"> Quick Mode
-</label>
-
-<div id="fullFields">
-<label>Address:</label><br>
-<input id="address" type="text"><br><br>
-
-<label>Notes:</label><br>
-<textarea id="notes"></textarea><br><br>
-
-<label>Estimated Rent:</label><br>
-<input id="rent" type="number" value="1500"><br><br>
-
-<label>Interest Rate (%):</label><br>
-<input id="rate" type="number" value="7"><br><br>
-</div>
-
-<label>ARV:</label><br>
-<input id="arv" type="number"><br><br>
-
-<label>Rehab:</label><br>
-<input id="rehab" type="number"><br><br>
-
-<label>Purchase Price:</label><br>
-<input id="price" type="number"><br><br>
-
-<button onclick="analyze()">Analyze Deal</button>
-<button onclick="saveDeal()">Save Deal</button>
-<button onclick="clearDeals()">Clear Deals</button>
-
-<h3 id="result"></h3>
-
-<hr>
-
-<h3>Filters</h3>
-
-<select id="filterRating">
-  <option value="ALL">All Deals</option>
-  <option value="ELITE DEAL">Elite Only</option>
-  <option value="STRONG DEAL">Strong+</option>
-</select>
-
-<select id="filterStrategy">
-  <option value="ALL">All Strategies</option>
-  <option value="CASHFLOW">Cash Flowing</option>
-  <option value="FLIP">High Profit</option>
-</select>
-
-<button onclick="renderDeals()">Apply Filters</button>
-
-<h3>Saved Deals</h3>
+<h3>Your Pipeline</h3>
 <div id="dealsList"></div>
 
 <script>
 let deals = [];
 
-let saved = localStorage.getItem("deals");
-if (saved) {
-    deals = JSON.parse(saved);
-    renderDeals();
+// LOAD AUTO DEALS
+async function loadAutoDeals() {
+    try {
+        let res = await fetch("deals.json");
+        let data = await res.json();
+
+        let html = "";
+
+        data.forEach(d => {
+            let analyzed = analyzeDeal(d.address, d.arv, d.rehab, d.price);
+
+            html += `
+            <div style="border:1px solid #aaa; padding:10px; margin:10px;">
+                <b>${d.address}</b><br>
+                ARV: $${d.arv}<br>
+                Price: $${d.price}<br>
+                Rehab: $${d.rehab}<br>
+                Profit: $${analyzed.profit}<br>
+                <b>${analyzed.rating}</b><br><br>
+
+                <button onclick='addToPipeline(${JSON.stringify(analyzed)})'>
+                ➕ Add to Pipeline
+                </button>
+            </div>
+            `;
+        });
+
+        document.getElementById("autoDeals").innerHTML = html;
+
+    } catch (e) {
+        document.getElementById("autoDeals").innerHTML = "No auto deals yet";
+    }
 }
 
-// BULK IMPORT
-function importDeals() {
-    let text = document.getElementById("bulkInput").value;
-    let lines = text.split("\n");
-
-    lines.forEach(line => {
-        let parts = line.split(",");
-
-        if (parts.length < 4) return;
-
-        let address = parts[0].trim();
-        let arv = parseFloat(parts[1]);
-        let rehab = parseFloat(parts[2]);
-        let price = parseFloat(parts[3]);
-
-        let deal = analyzeDeal(address, arv, rehab, price);
-
-        deals.push(deal);
-    });
-
-    localStorage.setItem("deals", JSON.stringify(deals));
-    renderDeals();
-}
-
-// CORE ANALYSIS (REUSABLE)
+// ANALYSIS ENGINE
 function analyzeDeal(address, arv, rehab, price) {
-    let rent = 1500;
-    let rate = 0.07;
-
     let mao = (arv * 0.7) - rehab;
     let profit = arv - price - rehab - 15000;
-    let percentOfArv = (price / arv) * 100;
+    let percent = (price / arv) * 100;
 
     let score = 0;
 
-    if (percentOfArv <= 50) score += 50;
-    else if (percentOfArv <= 60) score += 40;
-    else if (percentOfArv <= 70) score += 30;
-    else if (percentOfArv <= 80) score += 10;
+    if (percent <= 50) score += 50;
+    else if (percent <= 60) score += 40;
+    else if (percent <= 70) score += 30;
 
     if (profit > 50000) score += 30;
     else if (profit > 30000) score += 20;
-    else if (profit > 15000) score += 10;
 
     let rating = "PASS";
     if (score >= 80) rating = "ELITE DEAL";
     else if (score >= 60) rating = "STRONG DEAL";
-    else if (score >= 40) rating = "AVERAGE";
 
-    let refiValue = arv * 0.75;
-    let payment = refiValue * 0.0066;
-    let cashFlow = rent - payment;
-    let cashLeft = (price + rehab) - refiValue;
-
-    return {
-        address, arv, rehab, price,
-        mao, profit, percentOfArv, score, rating,
-        cashFlow, cashLeft,
-        status: "NEW"
-    };
+    return { address, arv, rehab, price, profit, score, rating, status: "NEW" };
 }
 
-// EXISTING FUNCTIONS (shortened)
+// ADD TO PIPELINE
+function addToPipeline(deal) {
+    deals.push(deal);
+    localStorage.setItem("deals", JSON.stringify(deals));
+    renderDeals();
+}
+
+// LOAD PIPELINE
+let saved = localStorage.getItem("deals");
+if (saved) {
+    deals = JSON.parse(saved);
+}
+
+// RENDER PIPELINE
 function renderDeals() {
     let html = "";
 
-    deals.forEach((d, i) => {
+    deals.forEach(d => {
         html += `
-        <div style="border:1px solid #ccc; margin:10px; padding:10px;">
-        <b>${d.address}</b><br>
-        ${d.rating} | Profit: $${d.profit}<br>
-        Cash Flow: $${d.cashFlow}<br>
-        Status: ${d.status}
-        </div>`;
+        <div style="border:1px solid #ccc; padding:10px; margin:10px;">
+            <b>${d.address}</b><br>
+            ${d.rating} | Profit: $${d.profit}<br>
+            Status: ${d.status}
+        </div>
+        `;
     });
 
     document.getElementById("dealsList").innerHTML = html;
 }
+
+// INIT
+loadAutoDeals();
+renderDeals();
 </script>
 
 </body>
