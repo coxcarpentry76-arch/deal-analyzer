@@ -143,7 +143,8 @@ function analyze() {
     window.lastDeal = {
         address, notes, arv, rehab, price, rent, rate,
         mao, profit, percentOfArv, score, rating,
-        refiValue, payment, cashFlow, cashLeft
+        refiValue, payment, cashFlow, cashLeft,
+        status: "NEW"
     };
 }
 
@@ -157,6 +158,13 @@ function saveDeal() {
     deals.push(window.lastDeal);
     deals.sort((a, b) => b.score - a.score);
 
+    localStorage.setItem("deals", JSON.stringify(deals));
+    renderDeals();
+}
+
+// UPDATE STATUS
+function updateStatus(index, newStatus) {
+    deals[index].status = newStatus;
     localStorage.setItem("deals", JSON.stringify(deals));
     renderDeals();
 }
@@ -191,9 +199,18 @@ function renderDeals() {
         <div style="border:1px solid #ccc; padding:10px; margin-bottom:10px;">
             <b>#${index + 1} - ${d.rating}</b><br>
             ${d.address}<br>
+            Status: <b>${d.status}</b><br>
             Score: ${d.score}<br>
             Profit: $${d.profit.toFixed(0)}<br>
-            Cash Flow: $${d.cashFlow.toFixed(0)}
+            Cash Flow: $${d.cashFlow.toFixed(0)}<br><br>
+
+            <select onchange="updateStatus(${index}, this.value)">
+                <option ${d.status==="NEW"?"selected":""}>NEW</option>
+                <option ${d.status==="CONTACTED"?"selected":""}>CONTACTED</option>
+                <option ${d.status==="OFFER SENT"?"selected":""}>OFFER SENT</option>
+                <option ${d.status==="UNDER CONTRACT"?"selected":""}>UNDER CONTRACT</option>
+                <option ${d.status==="CLOSED"?"selected":""}>CLOSED</option>
+            </select>
         </div>
         `;
     });
