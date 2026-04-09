@@ -1,14 +1,14 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Deal Analyzer</title>
+  <title>DealStrike</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 </head>
 
 <body style="font-family: Arial; padding: 20px;">
 
-<h2>Deal Analyzer</h2>
+<h2>DealStrike</h2>
 
 <label>Address:</label><br>
 <input id="address" type="text"><br><br>
@@ -36,6 +36,24 @@
 <button onclick="clearDeals()">Clear Deals</button>
 
 <h3 id="result"></h3>
+
+<hr>
+
+<h3>Filters</h3>
+
+<select id="filterRating">
+  <option value="ALL">All Deals</option>
+  <option value="ELITE DEAL">Elite Only</option>
+  <option value="STRONG DEAL">Strong+</option>
+</select>
+
+<select id="filterStrategy">
+  <option value="ALL">All Strategies</option>
+  <option value="CASHFLOW">Cash Flowing</option>
+  <option value="FLIP">High Profit</option>
+</select>
+
+<button onclick="renderDeals()">Apply Filters</button>
 
 <h3>Saved Deals</h3>
 <div id="dealsList"></div>
@@ -116,7 +134,6 @@ function analyze() {
 
     document.getElementById("result").innerHTML = output;
 
-    // SAVE TEMP DEAL
     window.lastDeal = {
         address, notes, arv, rehab, price, rent, rate,
         mao, profit, percentOfArv, score, rating,
@@ -145,11 +162,25 @@ function clearDeals() {
     renderDeals();
 }
 
-// RENDER DEALS
+// RENDER DEALS WITH FILTERS
 function renderDeals() {
     let html = "";
 
-    deals.forEach((d, index) => {
+    let ratingFilter = document.getElementById("filterRating")?.value || "ALL";
+    let strategyFilter = document.getElementById("filterStrategy")?.value || "ALL";
+
+    let filtered = deals.filter(d => {
+
+        if (ratingFilter === "ELITE DEAL" && d.rating !== "ELITE DEAL") return false;
+        if (ratingFilter === "STRONG DEAL" && !["ELITE DEAL", "STRONG DEAL"].includes(d.rating)) return false;
+
+        if (strategyFilter === "CASHFLOW" && d.cashFlow <= 0) return false;
+        if (strategyFilter === "FLIP" && d.profit < 30000) return false;
+
+        return true;
+    });
+
+    filtered.forEach((d, index) => {
         html += `
         <div style="border:1px solid #ccc; padding:10px; margin-bottom:10px;">
             <b>#${index + 1} - ${d.rating}</b><br>
@@ -157,10 +188,8 @@ function renderDeals() {
             <i>${d.notes || ""}</i><br>
             Score: ${d.score}<br>
             Price: $${d.price}<br>
-            ARV: $${d.arv}<br>
             Profit: $${d.profit.toFixed(0)}<br>
-            Cash Flow: $${d.cashFlow.toFixed(0)}<br>
-            Cash Left: $${d.cashLeft.toFixed(0)}
+            Cash Flow: $${d.cashFlow.toFixed(0)}
         </div>
         `;
     });
