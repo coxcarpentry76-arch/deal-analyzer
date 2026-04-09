@@ -8,7 +8,6 @@
 </head>
 
 <body style="font-family: Arial; padding: 20px;">
-
 <h2>Deal Analyzer</h2>
 
 <label>Address:</label><br>
@@ -21,15 +20,16 @@
 <input id="rehab" type="number"><br><br>
 
 <label>Purchase Price:</label><br>
-  <label>Notes:</label><br>
+<input id="price" type="number"><br><br>
+
+<label>Notes:</label><br>
 <textarea id="notes" rows="3"></textarea><br><br>
 
 <label>Estimated Rent:</label><br>
-<input id="rent" type="number"><br><br>
+<input id="rent" type="number" value="1500"><br><br>
 
 <label>Interest Rate (%):</label><br>
 <input id="rate" type="number" value="7"><br><br>
-<input id="price" type="number"><br><br>
 
 <button onclick="analyze()">Analyze Deal</button>
 <button onclick="saveDeal()">Save Deal</button>
