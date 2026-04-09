@@ -10,17 +10,14 @@
 
 <h2>DealStrike</h2>
 
+<label>
+<input type="checkbox" id="quickMode" onchange="toggleMode()"> Quick Mode
+</label>
+
+<div id="fullFields">
+
 <label>Address:</label><br>
 <input id="address" type="text"><br><br>
-
-<label>ARV:</label><br>
-<input id="arv" type="number"><br><br>
-
-<label>Rehab:</label><br>
-<input id="rehab" type="number"><br><br>
-
-<label>Purchase Price:</label><br>
-<input id="price" type="number"><br><br>
 
 <label>Notes:</label><br>
 <textarea id="notes" rows="3"></textarea><br><br>
@@ -30,6 +27,17 @@
 
 <label>Interest Rate (%):</label><br>
 <input id="rate" type="number" value="7"><br><br>
+
+</div>
+
+<label>ARV:</label><br>
+<input id="arv" type="number"><br><br>
+
+<label>Rehab:</label><br>
+<input id="rehab" type="number"><br><br>
+
+<label>Purchase Price:</label><br>
+<input id="price" type="number"><br><br>
 
 <button onclick="analyze()">Analyze Deal</button>
 <button onclick="saveDeal()">Save Deal</button>
@@ -61,28 +69,33 @@
 <script>
 let deals = [];
 
-// LOAD SAVED DEALS
+// LOAD
 let saved = localStorage.getItem("deals");
 if (saved) {
     deals = JSON.parse(saved);
     renderDeals();
 }
 
-// ANALYZE DEAL
+// TOGGLE MODE
+function toggleMode() {
+    let quick = document.getElementById("quickMode").checked;
+    document.getElementById("fullFields").style.display = quick ? "none" : "block";
+}
+
+// ANALYZE
 function analyze() {
-    let address = document.getElementById("address").value || "No address";
+    let address = document.getElementById("address")?.value || "No address";
     let arv = parseFloat(document.getElementById("arv").value) || 0;
     let rehab = parseFloat(document.getElementById("rehab").value) || 0;
     let price = parseFloat(document.getElementById("price").value) || 0;
-    let notes = document.getElementById("notes").value || "";
-    let rent = parseFloat(document.getElementById("rent").value) || 0;
-    let rate = (parseFloat(document.getElementById("rate").value) || 7) / 100;
+    let notes = document.getElementById("notes")?.value || "";
+    let rent = parseFloat(document.getElementById("rent")?.value) || 0;
+    let rate = (parseFloat(document.getElementById("rate")?.value) || 7) / 100;
 
     let mao = (arv * 0.7) - rehab;
     let profit = arv - price - rehab - 15000;
     let percentOfArv = arv ? (price / arv) * 100 : 0;
 
-    // SCORING
     let score = 0;
 
     if (percentOfArv <= 50) score += 50;
@@ -103,7 +116,6 @@ function analyze() {
     else if (score >= 60) rating = "STRONG DEAL";
     else if (score >= 40) rating = "AVERAGE";
 
-    // BRRRR CALCULATIONS
     let refiValue = arv * 0.75;
     let loanAmount = refiValue;
 
@@ -118,21 +130,15 @@ function analyze() {
     let cashFlow = rent - payment;
     let cashLeft = (price + rehab) - loanAmount;
 
-    let output = `
+    document.getElementById("result").innerHTML = `
     MAO: $${mao.toFixed(0)}<br>
     Profit: $${profit.toFixed(0)}<br>
-    % of ARV: ${percentOfArv.toFixed(1)}%<br>
-    Score: ${score}/100<br><br>
-    <b>${rating}</b>
+    Score: ${score}<br>
+    <b>${rating}</b><br><br>
 
-    <br><br><b>--- BRRRR ---</b><br>
-    Refi Value: $${refiValue.toFixed(0)}<br>
-    Payment: $${payment.toFixed(0)}<br>
     Cash Flow: $${cashFlow.toFixed(0)}<br>
     Cash Left: $${cashLeft.toFixed(0)}
     `;
-
-    document.getElementById("result").innerHTML = output;
 
     window.lastDeal = {
         address, notes, arv, rehab, price, rent, rate,
@@ -141,10 +147,10 @@ function analyze() {
     };
 }
 
-// SAVE DEAL
+// SAVE
 function saveDeal() {
     if (!window.lastDeal) {
-        alert("Analyze a deal first");
+        alert("Analyze first");
         return;
     }
 
@@ -155,14 +161,14 @@ function saveDeal() {
     renderDeals();
 }
 
-// CLEAR DEALS
+// CLEAR
 function clearDeals() {
     localStorage.removeItem("deals");
     deals = [];
     renderDeals();
 }
 
-// RENDER DEALS WITH FILTERS
+// RENDER
 function renderDeals() {
     let html = "";
 
@@ -185,9 +191,7 @@ function renderDeals() {
         <div style="border:1px solid #ccc; padding:10px; margin-bottom:10px;">
             <b>#${index + 1} - ${d.rating}</b><br>
             ${d.address}<br>
-            <i>${d.notes || ""}</i><br>
             Score: ${d.score}<br>
-            Price: $${d.price}<br>
             Profit: $${d.profit.toFixed(0)}<br>
             Cash Flow: $${d.cashFlow.toFixed(0)}
         </div>
