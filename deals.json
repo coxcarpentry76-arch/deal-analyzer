@@ -1,0 +1,14 @@
+[
+  {
+    "address": "123 Main St",
+    "arv": 200000,
+    "rehab": 40000,
+    "price": 100000
+  },
+  {
+    "address": "456 Oak Dr",
+    "arv": 250000,
+    "rehab": 30000,
+    "price": 140000
+  }
+]
