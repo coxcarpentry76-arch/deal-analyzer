@@ -1,0 +1,28 @@
+name: Auto Update Deals
+
+on:
+  schedule:
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+jobs:
+  update-deals:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Generate Deals
+        run: |
+          echo '[
+            {"address":"🔥 TEST DEAL 1","arv":180000,"rehab":40000,"price":90000},
+            {"address":"🔥 TEST DEAL 2","arv":220000,"rehab":30000,"price":120000}
+          ]' > deals.json
+
+      - name: Commit changes
+        run: |
+          git config user.name "bot"
+          git config user.email "bot@github.com"
+          git add deals.json
+          git commit -m "Auto update deals"
+          git push
