@@ -1,116 +1,848 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>DealStrike</title>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
+import React, { useState, useMemo } from 'react';
+import {
+  View, Text, ScrollView, TouchableOpacity, FlatList,
+  TextInput, StyleSheet, Dimensions, Linking,
+  Modal
+} from 'react-native';
+import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 
-<body style="font-family: Arial; padding: 20px;">
+const W = Dimensions.get('window').width;
 
-<h2>DealStrike</h2>
+// ─── COLORS ──────────────────────────────────────────────────────────────────
+const C = {
+  bg:'#09090f', surface:'#0f0f17', card:'#14141e', border:'#252535',
+  gold:'#c9a84c', goldGlow:'rgba(201,168,76,0.15)',
+  teal:'#2dd4bf', tealDim:'rgba(45,212,191,0.15)',
+  green:'#34d399', greenDim:'rgba(52,211,153,0.15)',
+  red:'#f87171', redDim:'rgba(248,113,113,0.15)',
+  amber:'#fbbf24', amberDim:'rgba(251,191,36,0.15)',
+  blue:'#60a5fa', blueDim:'rgba(96,165,250,0.15)',
+  purple:'#a78bfa', purpleDim:'rgba(167,139,250,0.15)',
+  t1:'#f0efe8', t2:'#9a9aaa', t3:'#454555',
+  navBg:'#0a0a14', navBorder:'#2a2a3e',
+  navActive:'#c9a84c', navInactive:'#666680',
+};
 
-<h3>Auto Deal Feed</h3>
-<div id="autoDeals"></div>
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+const f$=n=>{if(!n&&n!==0)return'TBD';if(n>=1e6)return`$${(n/1e6).toFixed(1)}M`;if(n>=1e3)return`$${(n/1e3).toFixed(0)}K`;return`$${n.toLocaleString()}`;};
+const acres=sf=>!sf?'N/A':sf>=43560?`${(sf/43560).toFixed(2)} ac`:`${sf.toLocaleString()} sf`;
+const classify=(arv,bid,rehab)=>{if(!arv||!bid)return{label:'UNSCORED',c:C.t3,bg:C.border};const p=(arv-bid-rehab)/arv;if(p>.35)return{label:'KILL SHOT',c:C.green,bg:C.greenDim};if(p>.22)return{label:'FLIP NOW',c:C.gold,bg:C.goldGlow};if(p>.12)return{label:'REVIEW',c:C.amber,bg:C.amberDim};if(p>.0)return{label:'WHOLESALE',c:C.blue,bg:C.blueDim};return{label:'PASS',c:C.red,bg:C.redDim};};
+const getScore=(arv,bid,rehab,urg=false)=>{if(!arv||!bid)return 0;const p=(arv-bid-rehab)/arv;let s=0;if(p>.40)s+=45;else if(p>.28)s+=30;else if(p>.16)s+=15;else if(p>.06)s+=6;if(bid<arv*.45)s+=28;else if(bid<arv*.58)s+=16;else if(bid<arv*.68)s+=8;return Math.min(s+(urg?10:0),100);};
+const STAGES=['Lead','Researching','Due Diligence','Offer Sent','Under Contract','Funding','In Rehab','Exit / List','Sold ✓','Passed'];
 
-<hr>
+// ─── ALL 43 TAX SALE STATES ───────────────────────────────────────────────────
+// Type: "Tax Deed" = you get deed at sale, "Tax Lien" = you buy lien first
+// Redemption: how long owner can buy back after sale
+const TAX_STATES = [
+  { code:'AL', name:'Alabama',       type:'Tax Lien',  redemption:'3 years',  deposit:'10%',  notes:'Sold at county courthouse. Overbid returned.',        phone:'N/A — county by county', url:'https://revenue.alabama.gov/property-tax/' },
+  { code:'AK', name:'Alaska',        type:'Tax Deed',  redemption:'None',     deposit:'Varies',notes:'Municipalities handle. Anchorage main market.',       phone:'907-343-6600', url:'https://www.muni.org/Departments/Finance/Pages/PropertyTaxes.aspx' },
+  { code:'AZ', name:'Arizona',       type:'Tax Lien',  redemption:'3 years',  deposit:'Full', notes:'Online auctions. Maricopa Co. biggest market.',        phone:'602-506-8511', url:'https://www.maricopa.gov/5765/Tax-Lien-Sales' },
+  { code:'AR', name:'Arkansas',      type:'Tax Deed',  redemption:'None',     deposit:'Full', notes:'Commissioner of State Lands handles statewide.',        phone:'501-324-9422', url:'https://www.cosl.org' },
+  { code:'CA', name:'California',    type:'Tax Deed',  redemption:'None',     deposit:'Varies',notes:'Online via county. No redemption once deed issued.',   phone:'N/A — county', url:'https://www.bid4assets.com' },
+  { code:'CO', name:'Colorado',      type:'Tax Lien',  redemption:'3 years',  deposit:'Full', notes:'Premium bid system. Highest % wins.',                  phone:'N/A — county', url:'https://www.colorado.gov/pacific/dor/property-tax' },
+  { code:'CT', name:'Connecticut',   type:'Tax Lien',  redemption:'6 months', deposit:'Full', notes:'Municipal tax liens. Small market.',                    phone:'N/A — municipal', url:'https://portal.ct.gov/OPM/Intergovernmental/Municipal-Tax' },
+  { code:'DE', name:'Delaware',      type:'Tax Deed',  redemption:'None',     deposit:'10-20%',notes:'Sheriff sales. 3 counties only.',                     phone:'302-739-3077', url:'https://revenue.delaware.gov' },
+  { code:'FL', name:'Florida',       type:'Tax Lien',  redemption:'2 years',  deposit:'Online',notes:'#1 state for tax liens. Online county auctions.',      phone:'N/A — county', url:'https://www.bid4assets.com/florida' },
+  { code:'GA', name:'Georgia',       type:'Tax Deed',  redemption:'1 year',   deposit:'10%',  notes:'Courthouse steps. Final at auction. 1-yr right of redemption.', phone:'N/A — county', url:'https://rlselaw.com/property-listings/' },
+  { code:'HI', name:'Hawaii',        type:'Tax Deed',  redemption:'None',     deposit:'Varies',notes:'Very limited inventory. Honolulu primary market.',     phone:'808-768-3980', url:'https://www.honolulu.gov/budget/real-property.html' },
+  { code:'ID', name:'Idaho',         type:'Tax Deed',  redemption:'None',     deposit:'Full', notes:'County treasurer handles. Online auctions.',            phone:'N/A — county', url:'https://tax.idaho.gov/taxes/property-tax/' },
+  { code:'IL', name:'Illinois',      type:'Tax Lien',  redemption:'2.5 years',deposit:'25%',  notes:'Judicial sale. Court confirmation required.',            phone:'N/A — county', url:'https://www.il-law.com' },
+  { code:'IN', name:'Indiana',       type:'Tax Lien',  redemption:'1 year',   deposit:'10%',  notes:'SRI Inc. handles many counties. Online bidding.',       phone:'800-800-9588', url:'https://www.sri-taxsale.com' },
+  { code:'IA', name:'Iowa',          type:'Tax Lien',  redemption:'1-2 years',deposit:'Full', notes:'Annual county tax sales. Certificate sale.',            phone:'N/A — county', url:'https://revenue.iowa.gov/property-tax' },
+  { code:'KS', name:'Kansas',        type:'Tax Deed',  redemption:'None',     deposit:'Full', notes:'Sheriff sales + county auctions.',                      phone:'N/A — county', url:'https://www.ksrevenue.gov' },
+  { code:'KY', name:'Kentucky',      type:'Tax Lien',  redemption:'1 year',   deposit:'10%',  notes:'Certificate sale. Annual county auction.',              phone:'N/A — county', url:'https://revenue.ky.gov/Property/Property-Tax' },
+  { code:'LA', name:'Louisiana',     type:'Tax Lien',  redemption:'3 years',  deposit:'Full', notes:'Parish (county) sales. Strong investment market.',      phone:'N/A — parish', url:'https://revenue.louisiana.gov/PropertyTax' },
+  { code:'ME', name:'Maine',         type:'Tax Deed',  redemption:'None',     deposit:'Full', notes:'Municipal tax lien foreclosures.',                       phone:'N/A — municipal', url:'https://www.maine.gov/revenue/taxes' },
+  { code:'MD', name:'Maryland',      type:'Tax Lien',  redemption:'6 months', deposit:'Full', notes:'Major market. Online auctions. Baltimore largest.',      phone:'410-887-2411', url:'https://sdat.dat.maryland.gov/RealProperty' },
+  { code:'MA', name:'Massachusetts', type:'Tax Lien',  redemption:'None',     deposit:'Full', notes:'Land court process. Slow but solid.',                   phone:'N/A — municipal', url:'https://www.mass.gov/service-details/property-tax' },
+  { code:'MI', name:'Michigan',      type:'Tax Deed',  redemption:'None',     deposit:'$2K+', notes:'Bid4Assets online for Wayne, Macomb, etc.',             phone:'313-224-5990', url:'https://www.bid4assets.com/wayne-county-mi' },
+  { code:'MN', name:'Minnesota',     type:'Tax Deed',  redemption:'None',     deposit:'Full', notes:'State holds forfeit land auctions.',                    phone:'651-556-6087', url:'https://mn.gov/revenue/property-tax/' },
+  { code:'MS', name:'Mississippi',   type:'Tax Lien',  redemption:'2 years',  deposit:'Full', notes:'Chancery clerk runs sales. Good rural market.',         phone:'N/A — county', url:'https://www.dor.ms.gov/property' },
+  { code:'MO', name:'Missouri',      type:'Tax Lien',  redemption:'1 year',   deposit:'Full', notes:'Collector of Revenue runs sale. St. Louis big market.', phone:'314-622-4105', url:'https://revenue.stlouiscity.com' },
+  { code:'MT', name:'Montana',       type:'Tax Lien',  redemption:'3 years',  deposit:'Full', notes:'County treasurer. Low volume.',                         phone:'N/A — county', url:'https://mtrevenue.gov/taxes/property-tax/' },
+  { code:'NE', name:'Nebraska',      type:'Tax Lien',  redemption:'3 years',  deposit:'Full', notes:'Certificate of purchase system.',                       phone:'N/A — county', url:'https://revenue.nebraska.gov' },
+  { code:'NV', name:'Nevada',        type:'Tax Deed',  redemption:'None',     deposit:'Full', notes:'County treasurer. Clark Co. (Las Vegas) biggest.',      phone:'702-455-4323', url:'https://www.clarkcountynv.gov/treasurer' },
+  { code:'NH', name:'New Hampshire', type:'Tax Lien',  redemption:'2 years',  deposit:'Full', notes:'Municipal. Low volume.',                                phone:'N/A — municipal', url:'https://www.revenue.nh.gov' },
+  { code:'NJ', name:'New Jersey',    type:'Tax Lien',  redemption:'2 years',  deposit:'Full', notes:'Huge lien market. Online via MCTLSA platform.',         phone:'N/A — municipality', url:'https://www.state.nj.us/treasury/taxation/lpt' },
+  { code:'NM', name:'New Mexico',    type:'Tax Deed',  redemption:'None',     deposit:'10%',  notes:'County treasurer. Bernalillo Co. main market.',         phone:'505-468-7031', url:'https://www.bernco.gov/treasurer' },
+  { code:'NC', name:'North Carolina',type:'Tax Deed',  redemption:'10 days',  deposit:'5-20%',notes:'10-day upset bid period. Hutchens, Kania, ZLS handle.', phone:'910-864-6888', url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx' },
+  { code:'NY', name:'New York',      type:'Tax Lien',  redemption:'1 year',   deposit:'Varies',notes:'NYC huge market. Nassau/Suffolk/Westchester active.',  phone:'N/A — county', url:'https://www.nyc.gov/site/finance/taxes/property-lien-sales.page' },
+  { code:'OH', name:'Ohio',          type:'Tax Deed',  redemption:'None',     deposit:'10%',  notes:'Sheriff sales. 30-day court confirmation.',             phone:'N/A — county', url:'https://www.franklincccs.org/real-estate-foreclosure-sales' },
+  { code:'OK', name:'Oklahoma',      type:'Tax Deed',  redemption:'None',     deposit:'Full', notes:'County treasurer runs sale. Bidding at courthouse.',     phone:'N/A — county', url:'https://oklahoma.gov/treasurer/services/county-treasurer.html' },
+  { code:'OR', name:'Oregon',        type:'Tax Deed',  redemption:'None',     deposit:'Full', notes:'Sheriff sales. Online in some counties.',               phone:'N/A — county', url:'https://www.oregon.gov/dor/programs/property' },
+  { code:'PA', name:'Pennsylvania',  type:'Tax Deed',  redemption:'None',     deposit:'10%',  notes:'Upset sale then judicial sale. Repository list.',        phone:'N/A — county', url:'https://www.tax-pa.com' },
+  { code:'SC', name:'South Carolina',type:'Tax Lien',  redemption:'1 year',   deposit:'20%',  notes:'Delinquent Tax Collector runs sale. SC has 30-day redemption period.', phone:'803-576-2250', url:'https://www.richlandcountysc.gov/Government/Departments/Treasurer' },
+  { code:'TN', name:'Tennessee',     type:'Tax Deed',  redemption:'None',     deposit:'10%',  notes:'Chancery court. 10-day upset period like NC.',           phone:'901-222-0200', url:'https://www.shelbycountytrustee.com/tax-sales' },
+  { code:'TX', name:'Texas',         type:'Tax Deed',  redemption:'None',     deposit:'FULL', notes:'First Tuesday every month. Full payment day of sale.',   phone:'713-274-8000', url:'https://www.hctax.net/propertytax/TaxSales' },
+  { code:'VA', name:'Virginia',      type:'Tax Deed',  redemption:'None',     deposit:'10%',  notes:'Circuit court handles. Online auctions in major counties.', phone:'N/A — county', url:'https://www.dta.virginia.gov' },
+  { code:'WA', name:'Washington',    type:'Tax Deed',  redemption:'None',     deposit:'10%',  notes:'County treasurer. No upset period.',                    phone:'253-798-6111', url:'https://www.piercecountywa.gov/2048/Real-Property-Tax-Foreclosure' },
+  { code:'WV', name:'West Virginia', type:'Tax Lien',  redemption:'18 months',deposit:'Full', notes:'State Auditor handles. SRI manages many counties.',      phone:'800-982-8297', url:'https://www.wvsao.gov/collections/taxsales' },
+  { code:'WI', name:'Wisconsin',     type:'Tax Deed',  redemption:'None',     deposit:'Full', notes:'Two-year delinquency then county takes deed.',           phone:'N/A — county', url:'https://www.revenue.wi.gov/Pages/RealEstate' },
+  { code:'WY', name:'Wyoming',       type:'Tax Lien',  redemption:'4 years',  deposit:'Full', notes:'County clerk runs auction. Low volume, rural.',          phone:'N/A — county', url:'https://revenue.wyo.gov/property-tax' },
+];
 
-<h3>Your Pipeline</h3>
-<div id="dealsList"></div>
+// ─── PROPERTY DATA ────────────────────────────────────────────────────────────
+const PROPS = [
+  // GUILFORD COUNTY
+  {id:'G01',focus:true,state:'NC',county:'Guilford',city:'Greensboro',zip:'27401',address:'3703 Brady Street',type:'Bank Foreclosure',status:'⚡ UPSET BID — SOLD APR 9',urgent:true,beds:3,baths:1,sqft:1100,lotSqft:11250,yearBuilt:1962,condition:'Medium',bid:244000,arv:268000,rehab:35000,rent:1200,saleDate:'Sold Apr 9 — UPSET OPEN ~Apr 21',saleTime:null,location:'Guilford Co. Clerk · 201 S. Eugene St., Greensboro',firm:'Richard A. Manger',phone:'336-641-3812',email:'ethomps@guilfordcountync.gov',caseNo:'25SP001841-400',owner:'Israel Montes Polledo',deposit:'20% of upset bid at Guilford Clerk',upsetRules:'5% min or $750 · 20% deposit · File at Guilford Clerk 1st floor',arvComps:[{addr:'3708 Meadow St',sold:265000,sqft:1080,date:'Jan 2026'},{addr:'3801 Bond St',sold:270000,sqft:1120,date:'Dec 2025'},{addr:'3612 Edgeworth',sold:262000,sqft:1100,date:'Nov 2025'},{addr:'3505 Benbow Rd',sold:258000,sqft:1090,date:'Oct 2025'},{addr:'3728 Brady St',sold:272000,sqft:1130,date:'Sep 2025'}],rentComps:[{addr:'3715 Yanceyville',rent:1250,sqft:1100},{addr:'3802 Phillips Ave',rent:1175,sqft:1050}],notes:'SOLD APR 9 — UPSET BID WINDOW OPEN. Ends ~April 21. 75×150ft lot. $244K deed of trust. Go to Guilford Clerk 1st floor TODAY.',source:'Hutchens / HP-E News',url:'https://www.hpenews.com/classifieds/community/announcements/legal/notice-of-foreclosure-sale-25sp001841-400/ad_92abb9f1-b3ab-51f9-b324-35eb4655debb.html'},
+  {id:'G02',focus:true,state:'NC',county:'Guilford',city:'Greensboro',zip:'27401',address:'Lavoris Harris Estate — Get Addr at Clerk',type:'Bank Foreclosure',status:'⚡ UPSET BID — SOLD APR 7',urgent:true,beds:3,baths:2,sqft:1350,lotSqft:8712,yearBuilt:1978,condition:'Medium',bid:null,arv:215000,rehab:32000,rent:1250,saleDate:'Sold Apr 7 — UPSET OPEN ~Apr 18',saleTime:null,location:'Guilford Co. Clerk · 201 S. Eugene St., Greensboro',firm:'Trustee Services of Carolina',phone:'704-362-6282',email:'foreclosure@tsofcarolina.com',caseNo:'25SP001095-400',owner:'Heirs of Lavoris W. Harris',deposit:'20% of upset bid',upsetRules:'Call Guilford Clerk 336-641-3832 for current bid — file 5% more',arvComps:[{addr:'Greensboro E. Side',sold:210000,sqft:1350,date:'Feb 2026'},{addr:'Greensboro area',sold:220000,sqft:1380,date:'Jan 2026'},{addr:'Greensboro area',sold:208000,sqft:1320,date:'Dec 2025'}],rentComps:[{addr:'E. Greensboro',rent:1275,sqft:1350},{addr:'Greensboro area',rent:1200,sqft:1300}],notes:'SOLD APR 7 — UPSET OPEN ~Apr 18. Go to Guilford Clerk 1st floor for current bid amount. Book 7970 Page 1317. Heirs of Lavoris W. Harris.',source:'Greensboro.com Legal Notice',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  {id:'G03',focus:true,state:'NC',county:'Guilford',city:'McLeansville area',zip:'27301',address:'Alamance Road SR-1005 — Verify at Clerk',type:'Bank Foreclosure — Estate',status:'⚡ UPSET BID — SOLD APR 14',urgent:true,beds:3,baths:2,sqft:1800,lotSqft:174240,yearBuilt:1975,condition:'Medium',bid:null,arv:385000,rehab:40000,rent:1600,saleDate:'Sold Apr 14 — UPSET OPEN ~Apr 24',saleTime:null,location:'Guilford Co. Clerk · 201 S. Eugene St., Greensboro',firm:'Trustee Services of Carolina',phone:'704-362-6282',email:'foreclosure@tsofcarolina.com',caseNo:'25SP000175-400',owner:'Estate of Hoyt Preston Hembree',deposit:'20% of upset bid',upsetRules:'Call Guilford Clerk 336-641-3832 for current bid amount then file',arvComps:[{addr:'Alamance Rd area',sold:380000,sqft:1800,date:'Feb 2026'},{addr:'Rural Guilford',sold:395000,sqft:1850,date:'Jan 2026'},{addr:'Guilford rural',sold:372000,sqft:1780,date:'Dec 2025'}],rentComps:[{addr:'Rural Guilford',rent:1625,sqft:1800},{addr:'Alamance Rd',rent:1575,sqft:1750}],notes:'SOLD APR 14 — UPSET OPEN ~Apr 24. 4+ ACRES on Alamance Rd. Estate sale BB&T 2008. Major acreage play near McLeansville.',source:'Greensboro.com Legal Notice',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  {id:'G04',focus:true,state:'NC',county:'Guilford',city:'Greensboro',zip:'27455',address:'7897 W Gander Court',type:'Bank Foreclosure',status:'📅 APR 21',urgent:true,beds:3,baths:2,sqft:1600,lotSqft:15246,yearBuilt:1991,condition:'Light',bid:null,arv:288000,rehab:20000,rent:1550,saleDate:'April 21, 2026',saleTime:'Noon',location:'Guilford Co. Courthouse · 201 S. Eugene St.',firm:'Hutchens Law Firm',phone:'910-864-6888',email:'lawfirm@hutchenslawfirm.com',caseNo:'24SP002289-400',owner:null,deposit:'5% or $750 certified',upsetRules:'10-day upset follows · 5%+$750 · Guilford Clerk',arvComps:[{addr:'NW Greensboro',sold:285000,sqft:1600,date:'Feb 2026'},{addr:'Lake Brandt area',sold:292000,sqft:1620,date:'Jan 2026'},{addr:'W Gander area',sold:280000,sqft:1580,date:'Dec 2025'},{addr:'NW Greensboro',sold:288000,sqft:1600,date:'Nov 2025'},{addr:'Lake Brandt Rd',sold:295000,sqft:1640,date:'Oct 2025'}],rentComps:[{addr:'NW Greensboro',rent:1575,sqft:1600},{addr:'Lake Brandt',rent:1525,sqft:1580}],notes:'NW Greensboro near Lake Brandt. Desirable area, good schools. Light rehab — strong BRRRR candidate at right bid.',source:'Hutchens Law Firm',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  {id:'G05',focus:true,state:'NC',county:'Guilford',city:'High Point',zip:'27262',address:'1110 Forrest Street',type:'Bank Foreclosure',status:'📅 APR 30',urgent:true,beds:3,baths:1,sqft:1100,lotSqft:8276,yearBuilt:1952,condition:'Heavy',bid:null,arv:148000,rehab:62000,rent:1050,saleDate:'April 30, 2026',saleTime:'Noon',location:'Guilford Co. Courthouse · 201 S. Eugene St.',firm:'Hutchens Law Firm',phone:'910-864-6888',email:'lawfirm@hutchenslawfirm.com',caseNo:'25SP001892-400',owner:null,deposit:'5% or $750 certified',upsetRules:'10-day upset follows · Guilford Clerk',arvComps:[{addr:'High Point area',sold:145000,sqft:1100,date:'Feb 2026'},{addr:'HP area',sold:152000,sqft:1120,date:'Jan 2026'},{addr:'High Point',sold:140000,sqft:1080,date:'Dec 2025'}],rentComps:[{addr:'High Point',rent:1075,sqft:1100},{addr:'HP area',rent:1025,sqft:1080}],notes:'High Point near furniture district. Heavy rehab. Wholesale at right price.',source:'Hutchens Law Firm',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  {id:'G06',focus:true,state:'NC',county:'Guilford',city:'Greensboro',zip:'27406',address:'2300 Phoenix Drive',type:'Bank Foreclosure',status:'📅 MAY 5',urgent:false,beds:3,baths:1,sqft:1200,lotSqft:8712,yearBuilt:1968,condition:'Heavy',bid:null,arv:178000,rehab:65000,rent:1100,saleDate:'May 5, 2026',saleTime:'Noon',location:'Guilford Co. Courthouse · 201 S. Eugene St.',firm:'Hutchens Law Firm',phone:'910-864-6888',email:'lawfirm@hutchenslawfirm.com',caseNo:'24SP002355-400',owner:null,deposit:'5% or $750 certified',upsetRules:'10-day upset follows · Guilford Clerk',arvComps:[{addr:'SW Greensboro',sold:175000,sqft:1200,date:'Feb 2026'},{addr:'Phoenix Dr',sold:182000,sqft:1220,date:'Jan 2026'},{addr:'SW Greensboro',sold:170000,sqft:1180,date:'Dec 2025'},{addr:'Vandalia area',sold:178000,sqft:1200,date:'Nov 2025'},{addr:'SW Greensboro',sold:180000,sqft:1210,date:'Oct 2025'}],rentComps:[{addr:'SW Greensboro',rent:1125,sqft:1200},{addr:'Phoenix Dr',rent:1075,sqft:1180}],notes:'SW Greensboro near I-40. Heavy rehab. Wholesale if bid comes in low.',source:'Hutchens Law Firm',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  // FORSYTH COUNTY
+  {id:'F01',focus:true,state:'NC',county:'Forsyth',city:'Winston-Salem',zip:'27101',address:'845 N Jackson Avenue',type:'Tax Sale — Upset Bid',status:'⚡ UPSET BID OPEN',urgent:true,beds:2,baths:1,sqft:900,lotSqft:6098,yearBuilt:1945,condition:'Heavy',bid:null,arv:108000,rehab:55000,rent:950,taxValue:21700,saleDate:'Sold Mar 6 — UPSET OPEN',saleTime:null,location:'Forsyth Co. Courthouse, 1st Floor Civil · 175 N. Chestnut St.',firm:'Mark D. Bardill, Atty',phone:'336-703-2940',email:'forsythtax@forsyth.cc',caseNo:'17 CVD 007315-330',owner:'Alberta S. Morrison et al',deposit:'5% or $750 to Forsyth Clerk',upsetRules:'OPEN — file 1st floor Forsyth Courthouse. Tax val $21,700.',arvComps:[{addr:'N Jackson area',sold:105000,sqft:900,date:'Jan 2026'},{addr:'NW W-S',sold:112000,sqft:950,date:'Dec 2025'},{addr:'W-S area',sold:98000,sqft:880,date:'Nov 2025'}],rentComps:[{addr:'N Jackson',rent:975,sqft:900},{addr:'NW W-S',rent:925,sqft:900}],notes:'UPSET BID OPEN. Tax value $21,700. Estate heirs. Go to Forsyth 1st floor Civil today.',source:'forsyth.cc Tax Dept',url:'https://www.forsyth.cc/tax/foreclosure_prop.aspx'},
+  {id:'F02',focus:true,state:'NC',county:'Forsyth',city:'Winston-Salem',zip:'27105',address:'1417 Douglas Street',type:'Tax Sale — Upset Bid',status:'⚡ UPSET BID OPEN',urgent:true,beds:3,baths:1,sqft:1050,lotSqft:6534,yearBuilt:1944,condition:'Heavy',bid:null,arv:125000,rehab:62000,rent:950,taxValue:35000,saleDate:'Sold Mar 6 — UPSET OPEN',saleTime:null,location:'Forsyth Co. Courthouse, 1st Floor Civil · 175 N. Chestnut St.',firm:'Mark D. Bardill, Atty',phone:'336-703-2940',email:'forsythtax@forsyth.cc',caseNo:'21 CVD 000475-330',owner:'Jatique R. Dailey et al',deposit:'5% or $750 to Forsyth Clerk',upsetRules:'OPEN — highest tax value on list $35K. File 1st floor Civil.',arvComps:[{addr:'1420 Douglas St',sold:122000,sqft:1050,date:'Jan 2026'},{addr:'1508 Cleveland',sold:115000,sqft:1020,date:'Dec 2025'},{addr:'1312 Welden St',sold:130000,sqft:1080,date:'Nov 2025'}],rentComps:[{addr:'1418 Douglas',rent:975,sqft:1050},{addr:'Cleveland area',rent:920,sqft:1000}],notes:'Highest tax value $35K on Forsyth upset list. Estate heirs. Strong flip at low buy-in.',source:'forsyth.cc Tax Dept',url:'https://www.forsyth.cc/tax/foreclosure_prop.aspx'},
+  {id:'F03',focus:true,state:'NC',county:'Forsyth',city:'Winston-Salem',zip:'27105',address:'1309 Wentworth Road',type:'Tax Sale — Upset Bid',status:'⚡ UPSET BID OPEN',urgent:true,beds:2,baths:1,sqft:850,lotSqft:5663,yearBuilt:1950,condition:'Heavy',bid:null,arv:95000,rehab:52000,rent:900,taxValue:7300,saleDate:'Sold Mar 6 — UPSET OPEN',saleTime:null,location:'Forsyth Co. Courthouse, 1st Floor Civil',firm:'Mark D. Bardill, Atty',phone:'336-703-2940',email:'forsythtax@forsyth.cc',caseNo:'22 CVD 003917-330',owner:'Judy Y. Wade et al',deposit:'5% or $750 to Forsyth Clerk',upsetRules:'OPEN — Tax value $7,300. File at Forsyth Clerk.',arvComps:[{addr:'Wentworth area',sold:92000,sqft:850,date:'Jan 2026'},{addr:'W-S area',sold:98000,sqft:870,date:'Dec 2025'},{addr:'W-S area',sold:88000,sqft:830,date:'Nov 2025'}],rentComps:[{addr:'Wentworth',rent:925,sqft:850},{addr:'W-S area',rent:875,sqft:850}],notes:'Tax val $7,300. Estate heirs. Wholesale candidate.',source:'forsyth.cc Tax Dept',url:'https://www.forsyth.cc/tax/foreclosure_prop.aspx'},
+  {id:'F04',focus:true,state:'NC',county:'Forsyth',city:'Winston-Salem',zip:'27105',address:'2514 Manchester Street',type:'Tax Sale — Upset Bid',status:'⚡ UPSET BID OPEN',urgent:true,beds:2,baths:1,sqft:800,lotSqft:5227,yearBuilt:1948,condition:'Gut',bid:null,arv:88000,rehab:75000,rent:875,taxValue:8100,saleDate:'Sold Mar 6 — UPSET OPEN',saleTime:null,location:'Forsyth Co. Courthouse, 1st Floor Civil',firm:'Mark D. Bardill, Atty',phone:'336-703-2940',email:'forsythtax@forsyth.cc',caseNo:'19 CVD 001342-330',owner:'Linda J. McGill et al',deposit:'5% or $750 to Forsyth Clerk',upsetRules:'OPEN — Tax val $8,100. Wholesale immediately after winning.',arvComps:[{addr:'Manchester area',sold:86000,sqft:800,date:'Jan 2026'},{addr:'W-S area',sold:92000,sqft:840,date:'Dec 2025'},{addr:'W-S',sold:82000,sqft:780,date:'Nov 2025'}],rentComps:[{addr:'Manchester',rent:900,sqft:800},{addr:'W-S area',rent:850,sqft:800}],notes:'Tax val $8,100. Gut rehab. Tiny buy-in = wholesale immediately.',source:'forsyth.cc Tax Dept',url:'https://www.forsyth.cc/tax/foreclosure_prop.aspx'},
+  {id:'F05',focus:true,state:'NC',county:'Forsyth',city:'Clemmons',zip:'27012',address:'3120 Middlebrook Drive',type:'Bank Foreclosure',status:'📅 APR 15',urgent:true,beds:3,baths:2,sqft:1600,lotSqft:17424,yearBuilt:1985,condition:'Light',bid:null,arv:298000,rehab:22000,rent:1650,saleDate:'April 15, 2026',saleTime:'Noon',location:'Forsyth Co. Courthouse · 175 N. Chestnut St.',firm:'Hutchens Law Firm',phone:'910-864-6888',email:'lawfirm@hutchenslawfirm.com',caseNo:'25SP001745-330',owner:null,deposit:'5% or $750 certified',upsetRules:'10-day upset follows · Forsyth Clerk 1st floor',arvComps:[{addr:'Clemmons area',sold:295000,sqft:1600,date:'Feb 2026'},{addr:'Clemmons SW',sold:305000,sqft:1620,date:'Jan 2026'},{addr:'Clemmons',sold:288000,sqft:1580,date:'Dec 2025'},{addr:'Forsyth SW',sold:298000,sqft:1600,date:'Nov 2025'},{addr:'Clemmons',sold:308000,sqft:1640,date:'Oct 2025'}],rentComps:[{addr:'Clemmons',rent:1675,sqft:1600},{addr:'SW Forsyth',rent:1625,sqft:1580}],notes:'Clemmons premium SW Forsyth suburb. 0.4 acres, light rehab. BRRRR: rent $1,650+/mo.',source:'Hutchens Law Firm',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  // DAVIDSON COUNTY
+  {id:'D01',focus:true,state:'NC',county:'Davidson',city:'Lexington',zip:'27295',address:'11 Mayflower Lane',type:'Bank Foreclosure',status:'⚡ VERIFY UPSET',urgent:true,beds:3,baths:2,sqft:1500,lotSqft:19166,yearBuilt:1982,condition:'Medium',bid:200353,arv:268000,rehab:32000,rent:1380,saleDate:'Mar 23 — Verify with Hutchens',saleTime:'Noon',location:'Davidson Co. Courthouse · 110 W. Center St., Lexington',firm:'Hutchens Law Firm',phone:'910-864-6888',email:'lawfirm@hutchenslawfirm.com',caseNo:'25SP000446-280',owner:null,deposit:'5% or $750 certified',upsetRules:'$200,353 bid set — call Hutchens to verify if window still open',arvComps:[{addr:'Mayflower Ln',sold:265000,sqft:1500,date:'Feb 2026'},{addr:'Lexington area',sold:255000,sqft:1470,date:'Jan 2026'},{addr:'Davidson Co.',sold:275000,sqft:1540,date:'Dec 2025'},{addr:'Lexington',sold:260000,sqft:1490,date:'Nov 2025'},{addr:'Davidson',sold:270000,sqft:1520,date:'Oct 2025'}],rentComps:[{addr:'Lexington',rent:1400,sqft:1500},{addr:'Davidson Co.',rent:1350,sqft:1470}],notes:'0.44 acres Lexington. $200,353 bid set. Call Hutchens 910-864-6888 NOW to verify upset window.',source:'Hutchens Law Firm',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  // STATEWIDE NC UPSETS
+  {id:'N01',state:'NC',county:'Cabarrus',city:'Kannapolis',zip:'28082',address:'151 Waco Avenue',type:'Tax Sale — Upset Bid',status:'⚡ UPSET BID OPEN',urgent:true,beds:3,baths:1,sqft:1200,lotSqft:13068,yearBuilt:1958,condition:'Heavy',bid:10000,arv:183000,rehab:68000,rent:1100,saleDate:'Filed Apr 6',saleTime:null,location:'Cabarrus Co. Clerk · Concord NC',firm:'Hutchens Law Firm',phone:'910-864-6888',email:'lawfirm@hutchenslawfirm.com',caseNo:'24SP000343-120',owner:null,deposit:'5% of bid certified',upsetRules:'Min next ~$10,500 · Cabarrus Clerk',arvComps:[{addr:'Waco Ave area',sold:185000,sqft:1200,date:'Feb 2026'},{addr:'Kannapolis',sold:178000,sqft:1180,date:'Jan 2026'},{addr:'Cabarrus',sold:190000,sqft:1250,date:'Dec 2025'},{addr:'Kannapolis',sold:175000,sqft:1150,date:'Nov 2025'},{addr:'Cabarrus',sold:193000,sqft:1300,date:'Oct 2025'}],rentComps:[{addr:'Waco Ave',rent:1125,sqft:1200},{addr:'Kannapolis',rent:1050,sqft:1150}],notes:'$10K opening bid! Charlotte metro. 0.3 acres. Verify clean title first — at this price could be a KILL SHOT.',source:'Hutchens Law Firm',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  {id:'N02',state:'NC',county:'Franklin',city:'Franklinton',zip:'27525',address:'241 Pine Ridge Drive',type:'Bank FC — Upset Bid',status:'⚡ UPSET BID OPEN',urgent:true,beds:3,baths:2,sqft:1350,lotSqft:19166,yearBuilt:1988,condition:'Medium',bid:69809,arv:215000,rehab:28000,rent:1300,saleDate:'Bid Apr 2',saleTime:null,location:'Franklin Co. Clerk',firm:'Hutchens Law Firm',phone:'910-864-6888',email:'lawfirm@hutchenslawfirm.com',caseNo:'22SP000152-340',owner:null,deposit:'5% of bid certified',upsetRules:'Min next ~$73,300 · Franklin Clerk',arvComps:[{addr:'Franklinton area',sold:212000,sqft:1350,date:'Feb 2026'},{addr:'Franklin Co.',sold:220000,sqft:1370,date:'Jan 2026'},{addr:'Franklinton',sold:208000,sqft:1330,date:'Dec 2025'},{addr:'Franklin Co.',sold:215000,sqft:1350,date:'Nov 2025'},{addr:'Franklinton',sold:218000,sqft:1360,date:'Oct 2025'}],rentComps:[{addr:'Franklinton',rent:1325,sqft:1350},{addr:'Franklin Co.',rent:1275,sqft:1320}],notes:'$69,809 bid. 0.44 acres. 30 min from RDU. Min next ~$73,300. Strong play.',source:'Hutchens Law Firm',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  {id:'N03',state:'NC',county:'Johnston',city:'Angier',zip:'27501',address:'2152 County Line Road',type:'Bank FC — Upset Bid',status:'⚡ UPSET BID OPEN',urgent:true,beds:3,baths:2,sqft:1500,lotSqft:43560,yearBuilt:1978,condition:'Medium',bid:125000,arv:255000,rehab:30000,rent:1450,saleDate:'Bid Mar 31',saleTime:null,location:'Johnston Co. Clerk',firm:'Hutchens Law Firm',phone:'910-864-6888',email:'lawfirm@hutchenslawfirm.com',caseNo:'16066-146129',owner:null,deposit:'5% of bid certified',upsetRules:'Min next ~$131,250 · Johnston Clerk',arvComps:[{addr:'Angier area',sold:252000,sqft:1500,date:'Feb 2026'},{addr:'Johnston Co.',sold:260000,sqft:1520,date:'Jan 2026'},{addr:'Angier',sold:248000,sqft:1480,date:'Dec 2025'},{addr:'Johnston Co.',sold:255000,sqft:1500,date:'Nov 2025'},{addr:'Angier',sold:258000,sqft:1510,date:'Oct 2025'}],rentComps:[{addr:'Angier',rent:1475,sqft:1500},{addr:'Johnston Co.',rent:1425,sqft:1480}],notes:'1 ACRE. 30 min from Raleigh. $125K on $255K ARV. Min next ~$131,250. Land + house.',source:'Hutchens Law Firm',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  {id:'N04',state:'NC',county:'Gaston',city:'Kings Mountain',zip:'28086',address:'1615 York Road',type:'Bank FC — Upset Bid',status:'⚡ UPSET BID OPEN',urgent:true,beds:3,baths:1,sqft:1050,lotSqft:17424,yearBuilt:1965,condition:'Heavy',bid:41816,arv:155000,rehab:65000,rent:980,saleDate:'Bid Mar 27',saleTime:null,location:'Gaston Co. Clerk',firm:'Hutchens Law Firm',phone:'910-864-6888',email:'lawfirm@hutchenslawfirm.com',caseNo:'24SP000069-350',owner:null,deposit:'5% of bid certified',upsetRules:'Min next ~$43,907 · Gaston Clerk',arvComps:[{addr:'Kings Mountain',sold:155000,sqft:1050,date:'Jan 2026'},{addr:'Gaston area',sold:148000,sqft:1000,date:'Dec 2025'},{addr:'Kings Mountain',sold:162000,sqft:1100,date:'Nov 2025'},{addr:'Gaston Co.',sold:152000,sqft:1030,date:'Oct 2025'},{addr:'Kings Mountain',sold:158000,sqft:1070,date:'Sep 2025'}],rentComps:[{addr:'Kings Mountain',rent:995,sqft:1050},{addr:'Gaston area',rent:950,sqft:1000}],notes:'0.4 acres Kings Mountain. 35mi west Charlotte — booming. Min next ~$43,907.',source:'Hutchens Law Firm',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  {id:'N05',state:'NC',county:'Union',city:'Indian Trail',zip:'28079',address:'5920 Emerald Woods Drive',type:'Bank FC — Upset Bid',status:'⚡ UPSET BID OPEN',urgent:true,beds:4,baths:2,sqft:1900,lotSqft:10890,yearBuilt:1995,condition:'Medium',bid:160811,arv:340000,rehab:32000,rent:2200,saleDate:'Bid Apr 2',saleTime:null,location:'Union Co. Clerk',firm:'Hutchens Law Firm',phone:'910-864-6888',email:'lawfirm@hutchenslawfirm.com',caseNo:'2450-140885',owner:null,deposit:'5% of bid certified',upsetRules:'Min next ~$168,851 · Union Clerk',arvComps:[{addr:'Indian Trail',sold:335000,sqft:1900,date:'Feb 2026'},{addr:'Union Co.',sold:345000,sqft:1920,date:'Jan 2026'},{addr:'Indian Trail',sold:328000,sqft:1880,date:'Dec 2025'},{addr:'SE Charlotte',sold:340000,sqft:1900,date:'Nov 2025'},{addr:'Indian Trail',sold:348000,sqft:1940,date:'Oct 2025'}],rentComps:[{addr:'Indian Trail',rent:2250,sqft:1900},{addr:'Union Co.',rent:2150,sqft:1900}],notes:'4/2 SE Charlotte suburb. $160K bid on $340K ARV. Min next ~$168,851. Premium market.',source:'Hutchens Law Firm',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  // NATIONWIDE
+  {id:'GA1',state:'GA',county:'DeKalb',city:'Decatur',zip:'30032',address:'2415 Glenwood Avenue',type:'Foreclosure Auction',status:'📅 APR 15',urgent:true,beds:4,baths:2,sqft:1800,lotSqft:10890,yearBuilt:1968,condition:'Medium',bid:145000,arv:325000,rehab:42000,rent:2100,saleDate:'April 15, 2026',saleTime:'10:00 AM',location:'DeKalb Co. Courthouse · 556 N McDonough St, Decatur GA',firm:'Rubin Lublin LLC',phone:'888-890-9002',email:'sales@rlselaw.com',caseNo:'DKB-2026-2415',owner:null,deposit:'10% certified day of sale',upsetRules:'Georgia: NO upset period — FINAL at auction',arvComps:[{addr:'Glenwood Ave',sold:320000,sqft:1800,date:'Feb 2026'},{addr:'Columbia Dr',sold:330000,sqft:1820,date:'Jan 2026'},{addr:'Candler Rd',sold:318000,sqft:1780,date:'Dec 2025'},{addr:'Glenwood',sold:328000,sqft:1810,date:'Nov 2025'},{addr:'Oakview Rd',sold:322000,sqft:1800,date:'Oct 2025'}],rentComps:[{addr:'Glenwood',rent:2150,sqft:1800},{addr:'Columbia Dr',rent:2050,sqft:1800}],notes:'4/2 intown Atlanta. $145K on $325K ARV = $138K spread. FINAL at auction — come prepared.',source:'Rubin Lublin LLC',url:'https://rlselaw.com/property-listings/'},
+  {id:'FL1',state:'FL',county:'Hillsborough',city:'Tampa',zip:'33605',address:'2218 E 21st Avenue',type:'Tax Deed Auction',status:'📅 APR 17 ONLINE',urgent:true,beds:3,baths:1,sqft:1080,lotSqft:6534,yearBuilt:1948,condition:'Heavy',bid:18000,arv:285000,rehab:68000,rent:1950,saleDate:'April 17, 2026',saleTime:'10:00 AM Online',location:'Online — bid.hillstax.org',firm:'Hillsborough Co. Tax Collector',phone:'813-635-5200',email:'hctaxcol@hillstax.org',caseNo:'HC-TAX-2026-2218',owner:null,deposit:'5% or $200 min — online',upsetRules:'Florida: NO redemption — final at close',arvComps:[{addr:'E 21st Ave',sold:280000,sqft:1080,date:'Feb 2026'},{addr:'E 22nd Ave',sold:292000,sqft:1100,date:'Jan 2026'},{addr:'N 22nd St',sold:275000,sqft:1060,date:'Dec 2025'},{addr:'E 21st',sold:288000,sqft:1090,date:'Nov 2025'},{addr:'N 23rd St',sold:278000,sqft:1070,date:'Oct 2025'}],rentComps:[{addr:'E 21st Tampa',rent:2000,sqft:1080},{addr:'E 22nd',rent:1925,sqft:1100}],notes:'Ybor City adjacent. $18K on $285K ARV. Florida: no redemption. KILL SHOT if confirmed.',source:'Hillsborough Co. Tax',url:'https://www.hillstax.org/taxes/tax-deed-sales/'},
+  {id:'TX1',state:'TX',county:'Harris',city:'Houston',zip:'77051',address:'5218 Morales Street',type:'Tax Sale',status:'📅 MAY — FIRST TUE',urgent:false,beds:3,baths:1,sqft:1050,lotSqft:6098,yearBuilt:1950,condition:'Heavy',bid:15200,arv:165000,rehab:62000,rent:1250,saleDate:'First Tuesday May 2026',saleTime:'10:00 AM',location:'Harris Co. Family Law Center · 1115 Congress Ave, Houston TX',firm:'Harris County Tax A-C',phone:'713-274-8000',email:'taxsales@hctx.net',caseNo:'HC-TAX-2026-5218',owner:null,deposit:'FULL payment day of sale',upsetRules:'TEXAS: Full payment day of sale. No redemption.',arvComps:[{addr:'Morales St',sold:162000,sqft:1050,date:'Feb 2026'},{addr:'Griggs Rd',sold:168000,sqft:1070,date:'Jan 2026'},{addr:'Culberson',sold:160000,sqft:1040,date:'Dec 2025'},{addr:'Morales',sold:165000,sqft:1060,date:'Nov 2025'},{addr:'Griggs',sold:162000,sqft:1050,date:'Oct 2025'}],rentComps:[{addr:'Morales area',rent:1275,sqft:1050},{addr:'Griggs area',rent:1225,sqft:1070}],notes:'Texas First Tuesday. FULL payment day of sale. Bring cashier check for full amount.',source:'Harris County TX',url:'https://www.hctax.net/propertytax/TaxSales'},
+  {id:'OH1',state:'OH',county:'Franklin',city:'Columbus',zip:'43207',address:'3215 S High Street',type:'Tax Lien Foreclosure',status:'📅 APR 22',urgent:false,beds:3,baths:1,sqft:1100,lotSqft:6534,yearBuilt:1935,condition:'Medium',bid:28000,arv:168000,rehab:32000,rent:1200,saleDate:'April 22, 2026',saleTime:'10:00 AM',location:'Franklin Co. Common Pleas · 369 S High St, Columbus OH',firm:'Codilis & Associates',phone:'630-794-9876',email:'info@il-law.com',caseNo:'FC-2025-3215',owner:null,deposit:'10% certified',upsetRules:'Ohio: 30-day court confirmation',arvComps:[{addr:'S High St',sold:165000,sqft:1100,date:'Feb 2026'},{addr:'Parsons Ave',sold:172000,sqft:1120,date:'Jan 2026'},{addr:'Columbus St',sold:162000,sqft:1080,date:'Dec 2025'},{addr:'S High',sold:170000,sqft:1110,date:'Nov 2025'},{addr:'Parsons',sold:165000,sqft:1100,date:'Oct 2025'}],rentComps:[{addr:'S High',rent:1225,sqft:1100},{addr:'Parsons',rent:1175,sqft:1100}],notes:'South Columbus. $28K on $168K ARV. Strong rental market. Ohio 30-day confirmation.',source:'Franklin Co. OH',url:'https://www.franklincccs.org/real-estate-foreclosure-sales'},
+  {id:'WA1',state:'WA',county:'Pierce',city:'Tacoma',zip:'98404',address:'3215 E G Street',type:'Tax Foreclosure',status:'📅 MAY 8',urgent:false,beds:3,baths:1,sqft:1100,lotSqft:6534,yearBuilt:1940,condition:'Medium',bid:48000,arv:325000,rehab:35000,rent:2000,saleDate:'May 8, 2026',saleTime:'9:00 AM',location:'Pierce Co. Superior Court · 930 Tacoma Ave S, Tacoma WA',firm:'Pierce Co. Treasurer',phone:'253-798-6111',email:'taxsales@co.pierce.wa.us',caseNo:'PC-2026-3215',owner:null,deposit:'10% certified',upsetRules:'Washington: No upset period — highest bid wins',arvComps:[{addr:'E G St Tacoma',sold:320000,sqft:1100,date:'Feb 2026'},{addr:'E Portland Ave',sold:330000,sqft:1120,date:'Jan 2026'},{addr:'E G St',sold:315000,sqft:1080,date:'Dec 2025'},{addr:'E H St',sold:328000,sqft:1110,date:'Nov 2025'},{addr:'E Portland',sold:322000,sqft:1090,date:'Oct 2025'}],rentComps:[{addr:'E G Tacoma',rent:2050,sqft:1100},{addr:'E Portland',rent:1975,sqft:1100}],notes:'Tacoma near Seattle metro. $48K on $325K ARV. No upset period.',source:'Pierce County WA',url:'https://www.piercecountywa.gov'},
+];
 
-<script>
-let deals = [];
+// ─── SMALL COMPONENTS ─────────────────────────────────────────────────────────
+function Badge({label,c,bg}){return<View style={{backgroundColor:bg,borderRadius:4,paddingHorizontal:7,paddingVertical:2,alignSelf:'flex-start'}}><Text style={{fontSize:9,fontWeight:'800',color:c,letterSpacing:0.8,textTransform:'uppercase'}}>{label}</Text></View>;}
+function STitle({t}){return<Text style={{fontSize:10,fontWeight:'800',color:C.gold,letterSpacing:1.5,textTransform:'uppercase',paddingHorizontal:16,marginTop:20,marginBottom:10}}>{t}</Text>;}
+function IR({label,value,vc}){if(!value||value==='N/A')return null;return<View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'flex-start',paddingHorizontal:14,paddingVertical:9,borderTopWidth:1,borderTopColor:C.border,gap:8}}><Text style={{fontSize:11,color:C.t3,flex:1}}>{label}</Text><Text style={[{fontSize:12,fontWeight:'600',color:C.t1,flex:2,textAlign:'right'},vc&&{color:vc}]} selectable>{value}</Text></View>;}
+function Ring({s}){const col=s>=70?C.green:s>=50?C.gold:s>=30?C.amber:C.t3;return<View style={{width:46,height:46,borderRadius:23,borderWidth:2.5,borderColor:col,backgroundColor:col+'20',justifyContent:'center',alignItems:'center'}}><Text style={{fontSize:14,fontWeight:'900',color:col,lineHeight:16}}>{s}</Text><Text style={{fontSize:6,color:col,fontWeight:'800',letterSpacing:0.8}}>SCORE</Text></View>;}
 
-// LOAD AUTO DEALS
-async function loadAutoDeals() {
-    try {
-        let res = await fetch("deals.json");
-        let data = await res.json();
-
-        let html = "";
-
-        data.forEach(d => {
-            let analyzed = analyzeDeal(d.address, d.arv, d.rehab, d.price);
-
-            html += `
-            <div style="border:1px solid #aaa; padding:10px; margin:10px;">
-                <b>${d.address}</b><br>
-                ARV: $${d.arv}<br>
-                Price: $${d.price}<br>
-                Rehab: $${d.rehab}<br>
-                Profit: $${analyzed.profit}<br>
-                <b>${analyzed.rating}</b><br><br>
-
-                <button onclick='addToPipeline(${JSON.stringify(analyzed)})'>
-                ➕ Add to Pipeline
-                </button>
-            </div>
-            `;
-        });
-
-        document.getElementById("autoDeals").innerHTML = html;
-
-    } catch (e) {
-        document.getElementById("autoDeals").innerHTML = "No auto deals yet";
-    }
+// ─── STATE DROPDOWN MODAL ─────────────────────────────────────────────────────
+function StateDropdown({visible,onClose,onSelect,selected}){
+  const [search,setSearch]=useState('');
+  const filtered=TAX_STATES.filter(s=>s.name.toLowerCase().includes(search.toLowerCase())||s.code.includes(search.toUpperCase()));
+  return(
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={{flex:1,backgroundColor:C.bg}}>
+        <View style={{padding:16,borderBottomWidth:1,borderBottomColor:C.border,flexDirection:'row',alignItems:'center',gap:12}}>
+          <TouchableOpacity onPress={onClose} style={{width:34,height:34,justifyContent:'center',alignItems:'center',backgroundColor:C.card,borderRadius:8,borderWidth:1,borderColor:C.border}}>
+            <Text style={{fontSize:18,color:C.t1}}>✕</Text>
+          </TouchableOpacity>
+          <View style={{flex:1}}>
+            <Text style={{fontSize:16,fontWeight:'800',color:C.t1}}>Select State</Text>
+            <Text style={{fontSize:11,color:C.t3}}>43 states with active tax sales</Text>
+          </View>
+        </View>
+        <View style={{margin:12,backgroundColor:C.card,borderRadius:10,borderWidth:1,borderColor:C.border,flexDirection:'row',alignItems:'center',paddingHorizontal:12}}>
+          <Text style={{fontSize:16,marginRight:8}}>🔍</Text>
+          <TextInput value={search} onChangeText={setSearch} placeholder="Search state..." placeholderTextColor={C.t3} style={{flex:1,color:C.t1,fontSize:14,paddingVertical:10}}/>
+        </View>
+        {/* All States option */}
+        <TouchableOpacity onPress={()=>{onSelect(null);onClose();}} style={{marginHorizontal:12,marginBottom:4,backgroundColor:selected===null?C.goldGlow:C.card,borderRadius:10,borderWidth:1,borderColor:selected===null?C.gold+'55':C.border,padding:14,flexDirection:'row',justifyContent:'space-between',alignItems:'center'}}>
+          <View><Text style={{fontSize:15,fontWeight:'800',color:selected===null?C.gold:C.t1}}>🇺🇸 All States</Text><Text style={{fontSize:11,color:C.t3}}>Show all {PROPS.length} properties</Text></View>
+          {selected===null&&<Text style={{color:C.gold,fontSize:16}}>✓</Text>}
+        </TouchableOpacity>
+        <FlatList data={filtered} keyExtractor={i=>i.code} contentContainerStyle={{padding:12,gap:6}} showsVerticalScrollIndicator={false}
+          renderItem={({item:s})=>{
+            const isSelected=selected===s.code;
+            const propCount=PROPS.filter(p=>p.state===s.code).length;
+            return(
+              <TouchableOpacity onPress={()=>{onSelect(s.code);onClose();}}
+                style={{backgroundColor:isSelected?C.goldGlow:C.card,borderRadius:10,borderWidth:1,borderColor:isSelected?C.gold+'55':C.border,padding:14,flexDirection:'row',alignItems:'center',gap:12}}>
+                <View style={{width:42,height:42,borderRadius:8,backgroundColor:isSelected?C.gold+'22':C.surface,borderWidth:1,borderColor:isSelected?C.gold+'44':C.border,justifyContent:'center',alignItems:'center'}}>
+                  <Text style={{fontSize:14,fontWeight:'900',color:isSelected?C.gold:C.t2}}>{s.code}</Text>
+                </View>
+                <View style={{flex:1}}>
+                  <View style={{flexDirection:'row',alignItems:'center',gap:8}}>
+                    <Text style={{fontSize:14,fontWeight:'700',color:isSelected?C.gold:C.t1}}>{s.name}</Text>
+                    {propCount>0&&<View style={{backgroundColor:C.green+'22',borderRadius:10,paddingHorizontal:7,paddingVertical:1}}><Text style={{fontSize:10,fontWeight:'700',color:C.green}}>{propCount} live</Text></View>}
+                  </View>
+                  <View style={{flexDirection:'row',gap:8,marginTop:3}}>
+                    <View style={{backgroundColor:s.type==='Tax Deed'?C.amberDim:C.blueDim,borderRadius:3,paddingHorizontal:5,paddingVertical:1}}>
+                      <Text style={{fontSize:9,fontWeight:'700',color:s.type==='Tax Deed'?C.amber:C.blue}}>{s.type}</Text>
+                    </View>
+                    <Text style={{fontSize:10,color:C.t3}}>Redemption: {s.redemption}</Text>
+                  </View>
+                  <Text style={{fontSize:10,color:C.t3,marginTop:2}} numberOfLines={1}>{s.notes}</Text>
+                </View>
+                {isSelected&&<Text style={{color:C.gold,fontSize:16}}>✓</Text>}
+              </TouchableOpacity>
+            );
+          }}
+        />
+      </View>
+    </Modal>
+  );
 }
 
-// ANALYSIS ENGINE
-function analyzeDeal(address, arv, rehab, price) {
-    let mao = (arv * 0.7) - rehab;
-    let profit = arv - price - rehab - 15000;
-    let percent = (price / arv) * 100;
-
-    let score = 0;
-
-    if (percent <= 50) score += 50;
-    else if (percent <= 60) score += 40;
-    else if (percent <= 70) score += 30;
-
-    if (profit > 50000) score += 30;
-    else if (profit > 30000) score += 20;
-
-    let rating = "PASS";
-    if (score >= 80) rating = "ELITE DEAL";
-    else if (score >= 60) rating = "STRONG DEAL";
-
-    return { address, arv, rehab, price, profit, score, rating, status: "NEW" };
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
+function DashboardScreen({navigate,setDetail}){
+  const upsets=PROPS.filter(p=>p.status?.includes('UPSET'));
+  const urgent=PROPS.filter(p=>p.urgent);
+  const focus=PROPS.filter(p=>p.focus);
+  const killShots=PROPS.filter(p=>{if(!p.arv||!p.bid)return false;return(p.arv-p.bid-p.rehab)/p.arv>0.30;}).sort((a,b)=>((b.arv-b.bid-b.rehab)/b.arv)-((a.arv-a.bid-a.rehab)/a.arv));
+  const totalArv=PROPS.reduce((s,p)=>s+(p.arv||0),0);
+  const states=[...new Set(PROPS.map(p=>p.state))];
+  return(
+    <ScrollView style={{flex:1,backgroundColor:C.bg}} showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom:40}}>
+      <View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'flex-start',padding:16,paddingTop:20,paddingBottom:16}}>
+        <View><Text style={{fontSize:28,fontWeight:'900',color:C.t1,letterSpacing:-1}}>VAN<Text style={{color:C.gold}}>TYX</Text></Text><Text style={{fontSize:9,color:C.t3,letterSpacing:2.5,marginTop:2}}>INVESTMENT INTELLIGENCE</Text></View>
+        <View style={{backgroundColor:C.greenDim,borderWidth:1,borderColor:C.green+'55',borderRadius:6,paddingHorizontal:12,paddingVertical:5}}><Text style={{fontSize:10,fontWeight:'800',color:C.green,letterSpacing:1}}>{PROPS.length} LIVE</Text></View>
+      </View>
+      <View style={{flexDirection:'row',flexWrap:'wrap',paddingHorizontal:16,gap:8,marginBottom:4}}>
+        {[{l:'Upset Bids',v:upsets.length,c:C.purple},{l:'Urgent',v:urgent.length,c:C.red},{l:'Focus Area',v:focus.length,c:C.gold},{l:'Kill Shots',v:killShots.length,c:C.green},{l:'Total ARV',v:f$(totalArv),c:C.gold},{l:'States',v:states.length,c:C.teal}].map(k=>(
+          <View key={k.l} style={{width:Math.floor((W-48)/3),backgroundColor:C.card,borderRadius:10,borderWidth:1,borderColor:C.border,padding:12,alignItems:'center'}}>
+            <Text style={{fontSize:k.l==='Total ARV'?15:20,fontWeight:'900',color:k.c,marginBottom:3}}>{k.v}</Text>
+            <Text style={{fontSize:9,color:C.t3,textTransform:'uppercase',letterSpacing:0.8,textAlign:'center'}}>{k.l}</Text>
+          </View>
+        ))}
+      </View>
+      <STitle t="⚡ UPSET BIDS OPEN RIGHT NOW"/>
+      {upsets.slice(0,4).map(p=>(
+        <TouchableOpacity key={p.id} style={{marginHorizontal:16,marginBottom:7,backgroundColor:C.card,borderWidth:1,borderColor:C.purple+'55',borderRadius:10,padding:13,flexDirection:'row',alignItems:'center',gap:10}} onPress={()=>{setDetail(p);navigate('detail');}} activeOpacity={0.75}>
+          <View style={{flex:1}}>
+            <Text style={{fontSize:9,color:C.purple,fontWeight:'800',letterSpacing:1,textTransform:'uppercase',marginBottom:2}}>{p.status}</Text>
+            <Text style={{fontSize:14,fontWeight:'800',color:C.t1}} numberOfLines={1}>{p.address}</Text>
+            <Text style={{fontSize:11,color:C.t2}}>{p.city}, {p.state} · {p.county} Co.</Text>
+          </View>
+          <View style={{alignItems:'flex-end'}}>
+            <Text style={{fontSize:14,fontWeight:'900',color:p.bid?C.teal:C.amber}}>{p.bid?f$(p.bid):'TBD'}</Text>
+            <Text style={{fontSize:11,color:C.gold}}>{f$(p.arv)}</Text>
+          </View>
+          <Text style={{color:C.t2,fontSize:18}}>›</Text>
+        </TouchableOpacity>
+      ))}
+      <STitle t="🎯 TOP KILL SHOTS"/>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{paddingLeft:16,paddingRight:8,gap:10}}>
+        {killShots.map(p=>{const cl=classify(p.arv,p.bid||1,p.rehab);return(
+          <TouchableOpacity key={p.id} style={{width:190,backgroundColor:C.card,borderWidth:1,borderColor:C.goldGlow,borderRadius:10,padding:14}} onPress={()=>{setDetail(p);navigate('detail');}} activeOpacity={0.75}>
+            <Badge label={cl.label} c={cl.c} bg={cl.bg}/>
+            <Text style={{fontSize:13,fontWeight:'800',color:C.t1,marginTop:8,marginBottom:2}} numberOfLines={1}>{p.address.split(' ').slice(0,3).join(' ')}</Text>
+            <Text style={{fontSize:11,color:C.t2,marginBottom:10}}>{p.city}, {p.state}</Text>
+            <View style={{flexDirection:'row',justifyContent:'space-between'}}>
+              <View><Text style={{fontSize:8,color:C.t3}}>BID</Text><Text style={{fontSize:12,fontWeight:'700',color:C.teal}}>{p.bid?f$(p.bid):'TBD'}</Text></View>
+              <View><Text style={{fontSize:8,color:C.t3}}>ARV</Text><Text style={{fontSize:12,fontWeight:'700',color:C.gold}}>{f$(p.arv)}</Text></View>
+              <View><Text style={{fontSize:8,color:C.t3}}>SPREAD</Text><Text style={{fontSize:12,fontWeight:'700',color:C.green}}>{f$(p.arv-(p.bid||0)-p.rehab)}</Text></View>
+            </View>
+          </TouchableOpacity>
+        );})}
+      </ScrollView>
+      <STitle t="📍 YOUR FOCUS COUNTIES"/>
+      {['Guilford','Forsyth','Davidson','Randolph'].map(co=>{const cnt=PROPS.filter(p=>p.county===co);return(
+        <View key={co} style={{marginHorizontal:16,marginBottom:6,backgroundColor:C.card,borderRadius:8,borderWidth:1,borderColor:C.border,padding:12,flexDirection:'row',alignItems:'center',justifyContent:'space-between'}}>
+          <View><Text style={{fontSize:14,fontWeight:'700',color:C.t1}}>{co} County, NC</Text><Text style={{fontSize:11,color:C.t2}}>{cnt.length} properties</Text></View>
+          <TouchableOpacity style={{backgroundColor:C.goldGlow,borderRadius:6,paddingHorizontal:12,paddingVertical:6,borderWidth:1,borderColor:C.gold+'44'}} onPress={()=>navigate('deals')}><Text style={{fontSize:11,fontWeight:'700',color:C.gold}}>View All</Text></TouchableOpacity>
+        </View>
+      );})}
+    </ScrollView>
+  );
 }
 
-// ADD TO PIPELINE
-function addToPipeline(deal) {
-    deals.push(deal);
-    localStorage.setItem("deals", JSON.stringify(deals));
-    renderDeals();
-}
+// ─── DEALS SCREEN ─────────────────────────────────────────────────────────────
+function DealsScreen({navigate,setDetail,pipeline}){
+  const [selectedState,setSelectedState]=useState(null);
+  const [showStateModal,setShowStateModal]=useState(false);
+  const [countyF,setCountyF]=useState('All');
+  const [statusF,setStatusF]=useState('All');
+  const [sort,setSort]=useState('Score');
 
-// LOAD PIPELINE
-let saved = localStorage.getItem("deals");
-if (saved) {
-    deals = JSON.parse(saved);
-}
+  const stateInfo=selectedState?TAX_STATES.find(s=>s.code===selectedState):null;
 
-// RENDER PIPELINE
-function renderDeals() {
-    let html = "";
-
-    deals.forEach(d => {
-        html += `
-        <div style="border:1px solid #ccc; padding:10px; margin:10px;">
-            <b>${d.address}</b><br>
-            ${d.rating} | Profit: $${d.profit}<br>
-            Status: ${d.status}
-        </div>
-        `;
+  const list=useMemo(()=>{
+    let l=[...PROPS];
+    if(selectedState)l=l.filter(p=>p.state===selectedState);
+    if(countyF!=='All')l=l.filter(p=>p.county===countyF);
+    if(statusF==='Upset Bid')l=l.filter(p=>p.status?.includes('UPSET'));
+    if(statusF==='Urgent')l=l.filter(p=>p.urgent);
+    if(statusF==='Focus NC')l=l.filter(p=>p.focus);
+    return l.sort((a,b)=>{
+      if(sort==='Score')return getScore(b.arv,b.bid||1,b.rehab,b.urgent)-getScore(a.arv,a.bid||1,a.rehab,a.urgent);
+      if(sort==='Spread')return(b.arv-(b.bid||0)-b.rehab)-(a.arv-(a.bid||0)-a.rehab);
+      if(sort==='Bid')return(a.bid||999999)-(b.bid||999999);
+      return 0;
     });
+  },[selectedState,countyF,statusF,sort]);
 
-    document.getElementById("dealsList").innerHTML = html;
+  return(
+    <View style={{flex:1,backgroundColor:C.bg}}>
+      {/* STATE SELECTOR BUTTON */}
+      <View style={{padding:12,paddingBottom:8}}>
+        <TouchableOpacity onPress={()=>setShowStateModal(true)}
+          style={{backgroundColor:C.card,borderRadius:12,borderWidth:1.5,borderColor:selectedState?C.gold+'66':C.border,padding:14,flexDirection:'row',alignItems:'center',gap:12}}>
+          <View style={{width:38,height:38,borderRadius:8,backgroundColor:selectedState?C.gold+'22':C.surface,borderWidth:1,borderColor:selectedState?C.gold+'44':C.border,justifyContent:'center',alignItems:'center'}}>
+            <Text style={{fontSize:selectedState?13:18}}>{selectedState||'🇺🇸'}</Text>
+          </View>
+          <View style={{flex:1}}>
+            <Text style={{fontSize:11,color:C.t3,textTransform:'uppercase',letterSpacing:1,marginBottom:2}}>VIEWING STATE</Text>
+            <Text style={{fontSize:15,fontWeight:'800',color:selectedState?C.gold:C.t1}}>
+              {selectedState?TAX_STATES.find(s=>s.code===selectedState)?.name:'All States'}
+            </Text>
+            {stateInfo&&<Text style={{fontSize:10,color:C.t3,marginTop:1}}>{stateInfo.type} · Redemption: {stateInfo.redemption}</Text>}
+          </View>
+          <View style={{alignItems:'flex-end',gap:3}}>
+            <Text style={{fontSize:11,fontWeight:'700',color:C.gold}}>{list.length} props</Text>
+            <Text style={{fontSize:11,color:C.t3}}>Change ›</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* State info banner */}
+        {stateInfo&&(
+          <View style={{marginTop:8,backgroundColor:stateInfo.type==='Tax Deed'?C.amberDim:C.blueDim,borderRadius:8,padding:10,borderWidth:1,borderColor:stateInfo.type==='Tax Deed'?C.amber+'33':C.blue+'33'}}>
+            <Text style={{fontSize:10,fontWeight:'800',color:stateInfo.type==='Tax Deed'?C.amber:C.blue,letterSpacing:0.8,marginBottom:3}}>{stateInfo.type.toUpperCase()} STATE · {stateInfo.redemption} redemption · Deposit: {stateInfo.deposit}</Text>
+            <Text style={{fontSize:11,color:C.t2,lineHeight:16}}>{stateInfo.notes}</Text>
+            <TouchableOpacity onPress={()=>stateInfo.phone!=='N/A — county'&&Linking.openURL(`tel:${stateInfo.phone.replace(/\D/g,'')}`)} style={{marginTop:6}}>
+              <Text style={{fontSize:11,color:C.green,fontWeight:'600'}}>📞 {stateInfo.phone}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
+      {/* QUICK FILTERS */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{maxHeight:34}} contentContainerStyle={{paddingHorizontal:12,gap:6,alignItems:'center'}}>
+        {['All','Upset Bid','Urgent','Focus NC'].map(f=>(
+          <TouchableOpacity key={f} onPress={()=>setStatusF(f)} style={{paddingHorizontal:11,paddingVertical:5,borderRadius:7,borderWidth:1,borderColor:statusF===f?C.purple+'66':C.border,backgroundColor:statusF===f?C.purpleDim:'transparent'}}>
+            <Text style={{fontSize:11,fontWeight:'700',color:statusF===f?C.purple:C.t3}}>{f}</Text>
+          </TouchableOpacity>
+        ))}
+        <View style={{width:1,height:16,backgroundColor:C.border}}/>
+        {['Guilford','Forsyth','Davidson'].map(co=>(
+          <TouchableOpacity key={co} onPress={()=>setCountyF(countyF===co?'All':co)} style={{paddingHorizontal:10,paddingVertical:5,borderRadius:7,borderWidth:1,borderColor:countyF===co?C.teal+'66':C.border,backgroundColor:countyF===co?C.tealDim:'transparent'}}>
+            <Text style={{fontSize:11,fontWeight:'700',color:countyF===co?C.teal:C.t3}}>{co}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* SORT */}
+      <View style={{flexDirection:'row',paddingHorizontal:12,gap:6,marginTop:6,marginBottom:4,alignItems:'center'}}>
+        <Text style={{fontSize:10,color:C.t3}}>Sort:</Text>
+        {['Score','Spread','Bid'].map(s=>(
+          <TouchableOpacity key={s} onPress={()=>setSort(s)} style={{paddingHorizontal:10,paddingVertical:4,borderRadius:6,borderWidth:1,borderColor:sort===s?C.amber+'66':C.border,backgroundColor:sort===s?C.amberDim:'transparent'}}>
+            <Text style={{fontSize:10,fontWeight:'700',color:sort===s?C.amber:C.t3}}>{s}</Text>
+          </TouchableOpacity>
+        ))}
+        <Text style={{fontSize:10,color:C.t3,marginLeft:'auto'}}>{list.length} results</Text>
+      </View>
+
+      <FlatList data={list} keyExtractor={i=>i.id} contentContainerStyle={{paddingHorizontal:12,paddingBottom:30}} ItemSeparatorComponent={()=><View style={{height:8}}/>} showsVerticalScrollIndicator={false}
+        renderItem={({item:p})=>{
+          const bid=p.bid??0;const cl=classify(p.arv,bid||1,p.rehab);const s=getScore(p.arv,bid||1,p.rehab,p.urgent);
+          const spread=p.arv-bid-p.rehab;const spPct=p.arv?Math.round(spread/p.arv*100):0;const stg=pipeline[p.id];
+          return(
+            <TouchableOpacity onPress={()=>{setDetail(p);navigate('detail');}} style={{backgroundColor:C.card,borderRadius:12,borderWidth:1,borderColor:p.focus?C.gold+'22':C.border,overflow:'hidden'}} activeOpacity={0.75}>
+              <View style={{height:3,backgroundColor:cl.c}}/>
+              <View style={{padding:13}}>
+                <View style={{flexDirection:'row',gap:10,alignItems:'flex-start',marginBottom:10}}>
+                  <Ring s={s}/>
+                  <View style={{flex:1}}>
+                    <View style={{flexDirection:'row',gap:5,flexWrap:'wrap',marginBottom:5}}>
+                      <Badge label={cl.label} c={cl.c} bg={cl.bg}/>
+                      {p.urgent&&<Badge label="URGENT" c={C.red} bg={C.redDim}/>}
+                      {p.focus&&<Badge label="FOCUS" c={C.gold} bg={C.goldGlow}/>}
+                      {stg&&stg!=='Lead'&&<Badge label={stg} c={C.purple} bg={C.purpleDim}/>}
+                    </View>
+                    <Text style={{fontSize:15,fontWeight:'800',color:C.t1,marginBottom:2}}>{p.address}</Text>
+                    <Text style={{fontSize:11,color:C.t2}}>{p.city}, {p.state} · {p.county} Co.</Text>
+                    <View style={{flexDirection:'row',gap:8,marginTop:5,flexWrap:'wrap'}}>
+                      {p.beds>0&&<Text style={{fontSize:11,color:C.t2}}>🛏 {p.beds}bd/{p.baths}ba</Text>}
+                      {p.sqft>0&&<Text style={{fontSize:11,color:C.t2}}>📐 {p.sqft.toLocaleString()} sqft</Text>}
+                      {p.lotSqft>0&&<Text style={{fontSize:11,color:C.t2}}>🌱 {acres(p.lotSqft)}</Text>}
+                    </View>
+                  </View>
+                  <View style={{alignItems:'flex-end'}}>
+                    <Text style={{fontSize:8,color:C.t3}}>{p.status?.includes('UPSET')?'BID':'OPEN'}</Text>
+                    <Text style={{fontSize:15,fontWeight:'900',color:p.status?.includes('UPSET')?C.purple:C.teal}}>{bid>0?f$(bid):'TBD'}</Text>
+                    <Text style={{fontSize:11,fontWeight:'700',color:C.gold,marginTop:2}}>{f$(p.arv)}</Text>
+                  </View>
+                </View>
+                <View style={{flexDirection:'row',backgroundColor:C.surface,borderRadius:8,padding:10,borderWidth:1,borderColor:C.border,marginBottom:8}}>
+                  {[['Rehab',f$(p.rehab),C.red],['Max',f$(Math.round(p.arv*.7-p.rehab)),C.amber],['Spread',`${f$(spread)} (${spPct}%)`,spread>0?C.green:C.red],['Rent/mo',f$(p.rent),C.blue]].map(([l,v,col])=>(
+                    <View key={l} style={{flex:1,alignItems:'center'}}>
+                      <Text style={{fontSize:8,color:C.t3,textTransform:'uppercase',letterSpacing:0.5,marginBottom:2}}>{l}</Text>
+                      <Text style={{fontSize:11,fontWeight:'700',color:col}}>{v}</Text>
+                    </View>
+                  ))}
+                </View>
+                <View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center'}}>
+                  <Text style={{fontSize:10,color:C.t3}} numberOfLines={1}>{p.status}</Text>
+                  <Text style={{fontSize:18,color:C.t2}}>›</Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+          );
+        }}
+      />
+      <StateDropdown visible={showStateModal} onClose={()=>setShowStateModal(false)} onSelect={setSelectedState} selected={selectedState}/>
+    </View>
+  );
 }
 
-// INIT
-loadAutoDeals();
-renderDeals();
-</script>
+// ─── DETAIL SCREEN ────────────────────────────────────────────────────────────
+function DetailScreen({prop,goBack,pipeline,setPipeline}){
+  const [tab,setTab]=useState('overview');
+  const bid=prop.bid??0;const cl=classify(prop.arv,bid||1,prop.rehab);const s=getScore(prop.arv,bid||1,prop.rehab,prop.urgent);
+  const spread=prop.arv-bid-prop.rehab;const spPct=prop.arv?Math.round(spread/prop.arv*100):0;
+  const maxOff=Math.round(prop.arv*.7-prop.rehab);const estProfit=Math.round(prop.arv-bid-prop.rehab-prop.arv*.08);
+  const roi=bid>0?Math.round((estProfit/(bid+prop.rehab))*100):0;
+  const stage=pipeline[prop.id]||'Lead';
+  const noi=Math.round(prop.rent*12*.65);const capRate=prop.arv>0?((noi/prop.arv)*100).toFixed(1):'0.0';
+  return(
+    <View style={{flex:1,backgroundColor:C.bg}}>
+      <View style={{flexDirection:'row',alignItems:'center',gap:10,paddingHorizontal:14,paddingTop:10,paddingBottom:10,borderBottomWidth:1,borderBottomColor:C.border,backgroundColor:C.surface}}>
+        <TouchableOpacity onPress={goBack} hitSlop={{top:10,bottom:10,left:10,right:10}} style={{width:34,height:34,justifyContent:'center',alignItems:'center',backgroundColor:C.card,borderRadius:8,borderWidth:1,borderColor:C.border}}>
+          <Text style={{fontSize:18,color:C.t1}}>‹</Text>
+        </TouchableOpacity>
+        <View style={{flex:1}}><Text style={{fontSize:15,fontWeight:'800',color:C.t1}} numberOfLines={1}>{prop.address}</Text><Text style={{fontSize:11,color:C.t2}}>{prop.city}, {prop.state} · {prop.county} Co.</Text></View>
+        {prop.focus&&<View style={{backgroundColor:C.goldGlow,borderRadius:5,paddingHorizontal:7,paddingVertical:3,borderWidth:1,borderColor:C.gold+'44'}}><Text style={{fontSize:9,fontWeight:'800',color:C.gold}}>FOCUS</Text></View>}
+      </View>
+      <View style={{paddingVertical:8,paddingHorizontal:14,backgroundColor:cl.bg,borderBottomWidth:1,borderBottomColor:cl.c+'44'}}>
+        <Text style={{fontSize:11,fontWeight:'800',color:cl.c,letterSpacing:0.8,textAlign:'center'}}>{cl.label}  ·  Score {s}/100  ·  {spPct}% Spread  ·  {prop.status}</Text>
+      </View>
+      <View style={{flexDirection:'row',borderBottomWidth:1,borderBottomColor:C.border,backgroundColor:C.surface}}>
+        {['overview','comps','numbers','contact','pipeline'].map(t=>(
+          <TouchableOpacity key={t} onPress={()=>setTab(t)} style={{flex:1,paddingVertical:10,alignItems:'center',borderBottomWidth:2,borderBottomColor:tab===t?C.gold:'transparent'}}>
+            <Text style={{fontSize:8,fontWeight:'800',color:tab===t?C.gold:C.t3,letterSpacing:0.8,textTransform:'uppercase'}}>{t}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <ScrollView style={{flex:1}} showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom:40}}>
+        {tab==='overview'&&(
+          <View style={{padding:16}}>
+            <View style={{flexDirection:'row',flexWrap:'wrap',gap:8}}>
+              {[['BID / ASK',bid>0?f$(bid):'TBD',C.teal],['ARV EST',f$(prop.arv),C.gold],['REHAB EST',f$(prop.rehab),C.red],['SPREAD',f$(spread),spread>0?C.green:C.red],['MAX 70% RULE',f$(maxOff),C.amber],['EST PROFIT',f$(estProfit),estProfit>0?C.green:C.red],['ROI %',`${roi}%`,roi>20?C.green:C.amber],['RENT EST',`${f$(prop.rent)}/mo`,C.blue]].map(([l,v,col])=>(
+                <View key={l} style={{width:(W-56)/2,backgroundColor:C.card,borderRadius:8,borderWidth:1,borderColor:C.border,padding:12}}>
+                  <Text style={{fontSize:8,color:C.t3,textTransform:'uppercase',letterSpacing:0.8,marginBottom:4}}>{l}</Text>
+                  <Text style={{fontSize:16,fontWeight:'900',color:col}}>{v}</Text>
+                </View>
+              ))}
+            </View>
+            <Text style={{fontSize:10,fontWeight:'800',color:C.gold,letterSpacing:1.5,textTransform:'uppercase',marginTop:20,marginBottom:12}}>PROPERTY DETAILS</Text>
+            <View style={{backgroundColor:C.card,borderRadius:10,borderWidth:1,borderColor:C.border,overflow:'hidden'}}>
+              <IR label="Address" value={`${prop.address}, ${prop.city}, ${prop.state} ${prop.zip}`}/>
+              {prop.beds>0&&<IR label="Beds/Baths" value={`${prop.beds}bd / ${prop.baths}ba`}/>}
+              {prop.sqft>0&&<IR label="Home Size" value={`${prop.sqft.toLocaleString()} sqft`}/>}
+              {prop.lotSqft&&<IR label="Lot Size" value={acres(prop.lotSqft)}/>}
+              {prop.yearBuilt&&<IR label="Year Built" value={String(prop.yearBuilt)}/>}
+              <IR label="Condition" value={prop.condition}/>
+              <IR label="Deal Type" value={prop.type}/>
+              <IR label="Sale Date" value={prop.saleDate} vc={C.gold}/>
+              <IR label="Location" value={prop.location}/>
+              <IR label="Case #" value={prop.caseNo}/>
+              {prop.owner&&<IR label="Owner" value={prop.owner} vc={C.amber}/>}
+              {prop.taxValue&&<IR label="Tax Value" value={f$(prop.taxValue)}/>}
+              <IR label="Deposit" value={prop.deposit} vc={C.red}/>
+              <IR label="Bid Rules" value={prop.upsetRules}/>
+            </View>
+            {prop.notes&&<View style={{backgroundColor:C.blueDim,borderRadius:10,borderWidth:1,borderColor:C.blue+'33',padding:14,marginTop:14}}><Text style={{fontSize:9,color:C.blue,fontWeight:'800',letterSpacing:1.2,textTransform:'uppercase',marginBottom:6}}>💡 INVESTOR NOTES</Text><Text style={{fontSize:12,color:C.t2,lineHeight:18}}>{prop.notes}</Text></View>}
+            <View style={{flexDirection:'row',gap:8,marginTop:16,flexWrap:'wrap'}}>
+              <TouchableOpacity style={{flex:1,backgroundColor:C.card,borderWidth:1,borderColor:C.green+'55',borderRadius:10,padding:14,alignItems:'center',gap:3}} onPress={()=>prop.phone&&Linking.openURL(`tel:${prop.phone.replace(/\D/g,'')}`)}>
+                <Text style={{fontSize:13,fontWeight:'700',color:C.green}}>📞 Call Firm</Text>
+                <Text style={{fontSize:9,color:C.t3}}>{prop.phone}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{flex:1,backgroundColor:C.card,borderWidth:1,borderColor:C.blue+'55',borderRadius:10,padding:14,alignItems:'center'}} onPress={()=>Linking.openURL(`https://maps.google.com/?q=${encodeURIComponent(prop.address+','+prop.city+','+prop.state)}`)}><Text style={{fontSize:13,fontWeight:'700',color:C.blue}}>📍 Map</Text></TouchableOpacity>
+              <TouchableOpacity style={{flex:1,backgroundColor:C.card,borderWidth:1,borderColor:C.teal+'55',borderRadius:10,padding:14,alignItems:'center'}} onPress={()=>Linking.openURL(`https://www.zillow.com/homes/${encodeURIComponent(prop.address+' '+prop.city+' '+prop.state)}_rb/`)}><Text style={{fontSize:13,fontWeight:'700',color:C.teal}}>🏠 Zillow</Text></TouchableOpacity>
+            </View>
+          </View>
+        )}
+        {tab==='comps'&&(
+          <View style={{padding:16}}>
+            <View style={{backgroundColor:C.card,borderRadius:10,borderWidth:1,borderColor:C.goldGlow,padding:16,alignItems:'center',marginBottom:16}}>
+              <Text style={{fontSize:9,color:C.t3,textTransform:'uppercase',letterSpacing:1.2,marginBottom:6}}>ESTIMATED ARV</Text>
+              <Text style={{fontSize:32,fontWeight:'900',color:C.gold,marginBottom:4}}>{f$(prop.arv)}</Text>
+              {prop.sqft>0&&<Text style={{fontSize:11,color:C.t2}}>${Math.round(prop.arv/prop.sqft)}/sqft · {prop.arvComps?.length||0} sale comps</Text>}
+            </View>
+            <Text style={{fontSize:10,fontWeight:'800',color:C.gold,letterSpacing:1.5,textTransform:'uppercase',marginBottom:10}}>SALE COMPS</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{gap:10,paddingRight:4}}>
+              {prop.arvComps?.map((c,i)=>(<View key={i} style={{width:160,backgroundColor:C.card,borderRadius:10,borderWidth:1,borderColor:C.border,padding:12}}><Text style={{fontSize:11,color:C.t2,marginBottom:4}} numberOfLines={1}>{c.addr}</Text><Text style={{fontSize:17,fontWeight:'800',color:C.gold}}>{f$(c.sold)}</Text><Text style={{fontSize:10,color:C.t3,marginTop:3}}>{c.sqft?.toLocaleString()} sqft · {c.date}</Text><Text style={{fontSize:10,color:C.t3}}>${Math.round(c.sold/c.sqft)}/sqft</Text></View>))}
+            </ScrollView>
+            {prop.rentComps?.length>0&&(<>
+              <Text style={{fontSize:10,fontWeight:'800',color:C.gold,letterSpacing:1.5,textTransform:'uppercase',marginTop:20,marginBottom:10}}>RENT COMPS · Est: <Text style={{color:C.blue}}>{f$(prop.rent)}/mo</Text></Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{gap:10,paddingRight:4}}>
+                {prop.rentComps.map((c,i)=>(<View key={i} style={{width:160,backgroundColor:C.card,borderRadius:10,borderWidth:1,borderColor:C.border,padding:12}}><Text style={{fontSize:11,color:C.t2,marginBottom:4}} numberOfLines={1}>{c.addr}</Text><Text style={{fontSize:17,fontWeight:'800',color:C.blue}}>{f$(c.rent)}/mo</Text><Text style={{fontSize:10,color:C.t3,marginTop:3}}>{c.sqft?.toLocaleString()} sqft</Text></View>))}
+              </ScrollView>
+            </>)}
+            <View style={{backgroundColor:C.card,borderRadius:10,borderWidth:1,borderColor:C.teal+'33',marginTop:16,overflow:'hidden'}}>
+              <Text style={{fontSize:10,fontWeight:'800',color:C.teal,padding:12,paddingBottom:4,letterSpacing:1.5,textTransform:'uppercase'}}>BRRRR ANALYSIS</Text>
+              <IR label="Monthly Rent" value={`${f$(prop.rent)}/mo`} vc={C.blue}/>
+              <IR label="Annual NOI (est)" value={`${f$(noi)}/yr`} vc={C.teal}/>
+              <IR label="Cap Rate (est)" value={`${capRate}%`} vc={C.teal}/>
+              <IR label="GRM" value={prop.arv>0&&prop.rent>0?`${(prop.arv/(prop.rent*12)).toFixed(1)}x`:null}/>
+            </View>
+          </View>
+        )}
+        {tab==='numbers'&&(
+          <View style={{padding:16}}>
+            <Text style={{fontSize:10,fontWeight:'800',color:C.gold,letterSpacing:1.5,textTransform:'uppercase',marginBottom:12}}>FULL DEAL ANALYSIS</Text>
+            <View style={{backgroundColor:C.card,borderRadius:10,borderWidth:1,borderColor:C.border,overflow:'hidden'}}>
+              {[['Purchase / Bid',bid>0?f$(bid):'TBD',C.teal],['Rehab Budget',f$(prop.rehab),C.red],['All-In Cost',f$(bid+prop.rehab),C.amber],['After Repair Value',f$(prop.arv),C.gold],['Selling Costs (8%)',f$(Math.round(prop.arv*.08)),C.t2],['NET PROFIT',f$(estProfit),estProfit>0?C.green:C.red],['ROI %',`${roi}%`,roi>20?C.green:C.amber],['Spread %',`${spPct}% of ARV`,spPct>25?C.green:C.amber],['Max Offer 70%',f$(maxOff),C.purple],['Monthly Rent',`${f$(prop.rent)}/mo`,C.blue],['Annual NOI',f$(noi),C.teal],['Cap Rate',`${capRate}%`,C.teal]].map(([l,v,col])=>v&&(
+                <View key={l} style={{flexDirection:'row',justifyContent:'space-between',paddingHorizontal:14,paddingVertical:10,borderTopWidth:1,borderTopColor:C.border,alignItems:'center'}}>
+                  <Text style={{fontSize:12,color:C.t2}}>{l}</Text>
+                  <Text style={{fontSize:13,fontWeight:'700',color:col}}>{v}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+        {tab==='contact'&&(
+          <View style={{padding:16}}>
+            <Text style={{fontSize:10,fontWeight:'800',color:C.gold,letterSpacing:1.5,textTransform:'uppercase',marginBottom:12}}>CONTACT INFO</Text>
+            <View style={{backgroundColor:C.card,borderRadius:10,borderWidth:1,borderColor:C.border,overflow:'hidden'}}>
+              <IR label="Firm" value={prop.firm} vc={C.t1}/>
+              <IR label="Phone" value={prop.phone} vc={C.green}/>
+              <IR label="Email" value={prop.email} vc={C.blue}/>
+              <IR label="Source" value={prop.source}/>
+            </View>
+            <View style={{flexDirection:'row',gap:10,marginTop:14}}>
+              <TouchableOpacity style={{flex:1,backgroundColor:C.green,borderRadius:10,padding:14,alignItems:'center'}} onPress={()=>prop.phone&&Linking.openURL(`tel:${prop.phone.replace(/\D/g,'')}`)}>
+                <Text style={{fontSize:14,fontWeight:'800',color:C.bg}}>📞 Call Now</Text>
+                <Text style={{fontSize:10,color:C.bg+'cc',marginTop:2}}>{prop.phone}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{flex:1,backgroundColor:C.gold,borderRadius:10,padding:14,alignItems:'center'}} onPress={()=>Linking.openURL(`https://maps.google.com/?q=${encodeURIComponent(prop.address+','+prop.city+','+prop.state)}`)}><Text style={{fontSize:14,fontWeight:'800',color:C.bg}}>📍 Get Directions</Text></TouchableOpacity>
+            </View>
+            <Text style={{fontSize:10,fontWeight:'800',color:C.gold,letterSpacing:1.5,textTransform:'uppercase',marginTop:20,marginBottom:12}}>BIDDING LOCATION</Text>
+            <View style={{backgroundColor:C.card,borderRadius:10,borderWidth:1,borderColor:C.gold+'33',overflow:'hidden'}}>
+              <IR label="Location" value={prop.location} vc={C.gold}/>
+              <IR label="Date/Time" value={`${prop.saleDate}${prop.saleTime?' · '+prop.saleTime:''}`} vc={C.amber}/>
+              <IR label="Deposit" value={prop.deposit} vc={C.red}/>
+              <IR label="Bid Rules" value={prop.upsetRules}/>
+              <IR label="Case #" value={prop.caseNo}/>
+              {prop.owner&&<IR label="Owner" value={prop.owner} vc={C.amber}/>}
+            </View>
+            {prop.url&&<TouchableOpacity style={{marginTop:12,backgroundColor:C.card,borderWidth:1,borderColor:C.teal+'44',borderRadius:8,padding:12,alignItems:'center'}} onPress={()=>Linking.openURL(prop.url)}><Text style={{fontSize:13,fontWeight:'700',color:C.teal}}>🔗 View Original Listing</Text></TouchableOpacity>}
+          </View>
+        )}
+        {tab==='pipeline'&&(
+          <View style={{padding:16}}>
+            <Text style={{fontSize:10,fontWeight:'800',color:C.gold,letterSpacing:1.5,textTransform:'uppercase',marginBottom:4}}>DEAL STAGE</Text>
+            <Text style={{fontSize:11,color:C.t3,marginBottom:14}}>Current: <Text style={{color:C.gold,fontWeight:'700'}}>{stage}</Text></Text>
+            {STAGES.map(s=>(
+              <TouchableOpacity key={s} style={{paddingHorizontal:14,paddingVertical:12,borderRadius:8,backgroundColor:stage===s?C.goldGlow:C.card,borderWidth:1,borderColor:stage===s?C.gold+'66':C.border,flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginBottom:7}} onPress={()=>setPipeline(p=>({...p,[prop.id]:s}))} activeOpacity={0.75}>
+                <Text style={{fontSize:13,fontWeight:'600',color:stage===s?C.gold:C.t2}}>{s}</Text>
+                {stage===s&&<Text style={{color:C.gold,fontSize:16}}>✓</Text>}
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </ScrollView>
+    </View>
+  );
+}
 
-</body>
-</html>
+// ─── PIPELINE SCREEN ─────────────────────────────────────────────────────────
+function PipelineScreen({navigate,setDetail,pipeline}){
+  const inPipe=PROPS.filter(p=>pipeline[p.id]&&pipeline[p.id]!=='Lead');
+  return(
+    <ScrollView style={{flex:1,backgroundColor:C.bg}} showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom:40}}>
+      <View style={{paddingHorizontal:16,paddingTop:16,paddingBottom:14}}>
+        <Text style={{fontSize:11,fontWeight:'800',color:C.gold,letterSpacing:2,textTransform:'uppercase'}}>MY PIPELINE</Text>
+        <Text style={{fontSize:13,color:C.t2,marginTop:2}}>{inPipe.length} active deals</Text>
+      </View>
+      {inPipe.length===0?(
+        <View style={{alignItems:'center',paddingTop:60}}>
+          <Text style={{fontSize:44}}>🏚️</Text>
+          <Text style={{fontSize:16,fontWeight:'700',color:C.t2,marginTop:16}}>No deals in pipeline yet</Text>
+          <Text style={{fontSize:12,color:C.t3,marginTop:8,textAlign:'center',paddingHorizontal:40,lineHeight:18}}>Open any property → tap Pipeline tab → move to a stage</Text>
+        </View>
+      ):(
+        inPipe.map(p=>{const bid=p.bid??0;const cl=classify(p.arv,bid||1,p.rehab);return(
+          <TouchableOpacity key={p.id} style={{marginHorizontal:16,marginBottom:7,backgroundColor:C.card,borderRadius:10,borderWidth:1,borderColor:C.gold+'22',padding:13,flexDirection:'row',alignItems:'center',gap:10}} onPress={()=>{setDetail(p);navigate('detail');}} activeOpacity={0.75}>
+            <View style={{width:9,height:9,borderRadius:4.5,backgroundColor:cl.c,flexShrink:0}}/>
+            <View style={{flex:1,minWidth:0}}>
+              <Text style={{fontSize:13,fontWeight:'700',color:C.t1}} numberOfLines={1}>{p.address}</Text>
+              <Text style={{fontSize:11,color:C.t2}}>{p.city}, {p.state} · <Text style={{color:C.purple}}>{pipeline[p.id]}</Text></Text>
+            </View>
+            <View style={{alignItems:'flex-end'}}>
+              <Text style={{fontSize:12,fontWeight:'700',color:C.teal}}>{bid>0?f$(bid):'TBD'}</Text>
+              <Text style={{fontSize:11,color:C.gold}}>{f$(p.arv)}</Text>
+            </View>
+            <Text style={{color:C.t2,fontSize:18,marginLeft:4}}>›</Text>
+          </TouchableOpacity>
+        );})
+      )}
+    </ScrollView>
+  );
+}
+
+// ─── SOURCES SCREEN ───────────────────────────────────────────────────────────
+const SOURCES=[
+  {cat:'Attorney/Trustee',name:'Hutchens Law Firm',region:'NC/SC',phone:'910-864-6888',url:'https://sales.hutchenslawfirm.com/NCfcSalesList.aspx'},
+  {cat:'Attorney/Trustee',name:'Kania Law Firm',region:'NC',phone:'828-252-8010',url:'https://kanialawfirm.com'},
+  {cat:'Attorney/Trustee',name:'Trustee Services of Carolina',region:'NC/SC',phone:'704-362-6282',url:'https://tsofcarolina.com'},
+  {cat:'Attorney/Trustee',name:'LOGS Legal Group',region:'NC',phone:'800-934-2734',url:'https://www.logs.com'},
+  {cat:'Attorney/Trustee',name:'Rubin Lublin LLC',region:'GA/TN',phone:'888-890-9002',url:'https://rlselaw.com/property-listings/'},
+  {cat:'Attorney/Trustee',name:'Reimer Law Co.',region:'OH/KY',phone:'800-968-0087',url:'https://reimerlaw.com'},
+  {cat:'Gov Auction',name:'HUD Homes',region:'Nationwide',phone:'800-225-5342',url:'https://www.hudhomestore.gov'},
+  {cat:'Gov Auction',name:'Fannie Mae HomePath',region:'Nationwide',phone:'800-232-6643',url:'https://www.homepath.com'},
+  {cat:'Gov Auction',name:'Freddie Mac HomeSteps',region:'Nationwide',phone:'800-373-3343',url:'https://www.homesteps.com'},
+  {cat:'Gov Auction',name:'US Treasury Seized',region:'Nationwide',phone:'202-622-2000',url:'https://www.treasury.gov/auctions/treasury/rp/realprop.shtml'},
+  {cat:'Gov Auction',name:'Forsyth County Tax',region:'NC-Forsyth',phone:'336-703-2940',url:'https://www.forsyth.cc/tax/foreclosure_prop.aspx'},
+  {cat:'Gov Auction',name:'Guilford County / ZLS',region:'NC-Guilford',phone:'336-641-3832',url:'https://www.zls-nc.com/guilford-county'},
+  {cat:'Gov Auction',name:'Davidson Co. / Kania',region:'NC-Davidson',phone:'828-252-8010',url:'https://kanialawfirm.com/tax-foreclosures-davidson-county/'},
+  {cat:'Gov Auction',name:'Randolph Co. Tax',region:'NC-Randolph',phone:'336-318-6510',url:'https://storymaps.arcgis.com/stories/859ab5a76a0d4c3d97f655137a75464a'},
+  {cat:'Online Auction',name:'Auction.com',region:'Nationwide',phone:'800-793-6107',url:'https://www.auction.com'},
+  {cat:'Online Auction',name:'Bid4Assets',region:'Nationwide',phone:'301-961-6800',url:'https://www.bid4assets.com'},
+  {cat:'Online Auction',name:'GovEase',region:'Nationwide',phone:'855-468-3273',url:'https://www.govease.com'},
+  {cat:'Online Auction',name:'Hubzu',region:'Nationwide',phone:'855-427-2604',url:'https://www.hubzu.com'},
+  {cat:'Online Auction',name:'Xome',region:'Nationwide',phone:'844-400-9663',url:'https://www.xome.com'},
+  {cat:'Lead Database',name:'PropStream',region:'Nationwide',phone:'800-622-7412',url:'https://propstream.com'},
+  {cat:'Lead Database',name:'BatchLeads',region:'Nationwide',phone:'877-700-7530',url:'https://batchleads.io'},
+  {cat:'Lead Database',name:'DealMachine',region:'Nationwide',phone:'317-316-0283',url:'https://www.dealmachine.com'},
+  {cat:'Wholesale',name:'Connected Investors',region:'Nationwide',phone:'800-291-4431',url:'https://connectedinvestors.com'},
+  {cat:'Probate/Estate',name:'ProbateLeads.com',region:'Nationwide',phone:'888-287-1753',url:'https://www.probateleads.com'},
+];
+function SourcesScreen(){
+  const [cat,setCat]=useState('All');
+  const cats=['All','Attorney/Trustee','Gov Auction','Online Auction','Lead Database','Wholesale'];
+  const cc={'Attorney/Trustee':C.purple,'Gov Auction':C.gold,'Online Auction':C.teal,'Lead Database':C.blue,'Wholesale':C.green,'Probate/Estate':C.amber};
+  const filtered=cat==='All'?SOURCES:SOURCES.filter(s=>s.cat===cat);
+  return(
+    <View style={{flex:1,backgroundColor:C.bg}}>
+      <View style={{paddingHorizontal:16,paddingTop:16,paddingBottom:10}}>
+        <Text style={{fontSize:11,fontWeight:'800',color:C.gold,letterSpacing:2,textTransform:'uppercase'}}>DATA SOURCES</Text>
+        <Text style={{fontSize:13,color:C.t2,marginTop:2}}>{SOURCES.length} verified · tap to open or call</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{maxHeight:36}} contentContainerStyle={{paddingHorizontal:12,gap:6,alignItems:'center'}}>
+        {cats.map(c=>{const col=cc[c]||C.gold;return(
+          <TouchableOpacity key={c} onPress={()=>setCat(c)} style={{paddingHorizontal:10,paddingVertical:5,borderRadius:7,borderWidth:1,borderColor:cat===c?col+'66':C.border,backgroundColor:cat===c?col+'18':'transparent'}}>
+            <Text style={{fontSize:11,fontWeight:'700',color:cat===c?col:C.t3}}>{c}</Text>
+          </TouchableOpacity>
+        );})}
+      </ScrollView>
+      <FlatList data={filtered} keyExtractor={(_,i)=>String(i)} contentContainerStyle={{paddingHorizontal:12,paddingTop:10,paddingBottom:40}} ItemSeparatorComponent={()=><View style={{height:7}}/>} showsVerticalScrollIndicator={false}
+        renderItem={({item:s})=>{const col=cc[s.cat]||C.gold;return(
+          <TouchableOpacity style={{backgroundColor:C.card,borderRadius:10,borderWidth:1,borderColor:C.border,padding:14,flexDirection:'row',alignItems:'flex-start',gap:10}} onPress={()=>s.url&&Linking.openURL(s.url)} activeOpacity={0.75}>
+            <View style={{width:9,height:9,borderRadius:4.5,backgroundColor:col,marginTop:5,flexShrink:0}}/>
+            <View style={{flex:1}}>
+              <View style={{flexDirection:'row',alignItems:'center',gap:6,marginBottom:2}}>
+                <Text style={{fontSize:14,fontWeight:'700',color:C.t1}}>{s.name}</Text>
+                <Text style={{fontSize:11,color:C.green}}>✓</Text>
+              </View>
+              <Text style={{fontSize:10,color:C.t3,textTransform:'uppercase',letterSpacing:0.8,marginBottom:5}}>{s.cat} · {s.region}</Text>
+              <TouchableOpacity onPress={()=>s.phone&&Linking.openURL(`tel:${s.phone.replace(/\D/g,'')}`)}><Text style={{fontSize:12,color:C.green,fontWeight:'600'}}>📞 {s.phone}</Text></TouchableOpacity>
+            </View>
+            <Text style={{fontSize:16,color:C.t2}}>›</Text>
+          </TouchableOpacity>
+        );}
+        }/>
+    </View>
+  );
+}
+
+// ─── FOCUS AREAS SCREEN ───────────────────────────────────────────────────────
+const DEFAULT_FOCUS = [
+  { id:'f1', county:'Guilford',  state:'NC', note:'Primary market — ZLS + Hutchens' },
+  { id:'f2', county:'Forsyth',   state:'NC', note:'forsyth.cc — 6 upset bids active' },
+  { id:'f3', county:'Davidson',  state:'NC', note:'Kania Law Firm — Lexington area' },
+  { id:'f4', county:'Randolph',  state:'NC', note:'Asheboro — growing Triad bedroom' },
+];
+
+function FocusScreen({ navigate, setDetail, pipeline }) {
+  const [areas, setAreas] = useState(DEFAULT_FOCUS);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newCounty, setNewCounty] = useState('');
+  const [newState, setNewState] = useState('');
+  const [newNote, setNewNote]   = useState('');
+
+  const addArea = () => {
+    if (!newCounty.trim() || !newState.trim()) return;
+    const id = 'f' + Date.now();
+    setAreas(prev => [...prev, { id, county: newCounty.trim(), state: newState.trim().toUpperCase(), note: newNote.trim() }]);
+    setNewCounty(''); setNewState(''); setNewNote('');
+    setShowAdd(false);
+  };
+
+  const removeArea = (id) => setAreas(prev => prev.filter(a => a.id !== id));
+
+  return (
+    <ScrollView style={{flex:1, backgroundColor:C.bg}} showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom:40}}>
+      {/* Header */}
+      <View style={{paddingHorizontal:16, paddingTop:20, paddingBottom:4}}>
+        <Text style={{fontSize:11, fontWeight:'800', color:C.gold, letterSpacing:2, textTransform:'uppercase'}}>📍 FOCUS AREAS</Text>
+        <Text style={{fontSize:13, color:C.t2, marginTop:2}}>Your target counties — deals filtered to these first</Text>
+      </View>
+
+      {/* Area cards */}
+      {areas.map(area => {
+        const props = PROPS.filter(p => p.county === area.county && p.state === area.state);
+        const upsets = props.filter(p => p.status?.includes('UPSET'));
+        const upcoming = props.filter(p => p.status?.includes('📅'));
+        return (
+          <View key={area.id} style={{marginHorizontal:16, marginTop:12, backgroundColor:C.card, borderRadius:12, borderWidth:1, borderColor:C.gold+'33', overflow:'hidden'}}>
+            {/* Top bar */}
+            <View style={{height:3, backgroundColor:C.gold}}/>
+            <View style={{padding:14}}>
+              <View style={{flexDirection:'row', alignItems:'flex-start', justifyContent:'space-between'}}>
+                <View style={{flex:1}}>
+                  <Text style={{fontSize:18, fontWeight:'900', color:C.t1}}>{area.county} County</Text>
+                  <Text style={{fontSize:12, color:C.gold, fontWeight:'700'}}>{area.state}</Text>
+                  {area.note ? <Text style={{fontSize:11, color:C.t3, marginTop:4}}>{area.note}</Text> : null}
+                </View>
+                <TouchableOpacity onPress={()=>removeArea(area.id)} style={{padding:6, backgroundColor:C.redDim, borderRadius:6, borderWidth:1, borderColor:C.red+'44'}}>
+                  <Text style={{fontSize:11, color:C.red, fontWeight:'700'}}>Remove</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Stats row */}
+              <View style={{flexDirection:'row', gap:8, marginTop:12}}>
+                <View style={{flex:1, backgroundColor:C.surface, borderRadius:8, padding:10, alignItems:'center', borderWidth:1, borderColor:C.border}}>
+                  <Text style={{fontSize:18, fontWeight:'900', color:C.purple}}>{upsets.length}</Text>
+                  <Text style={{fontSize:9, color:C.t3, textTransform:'uppercase', letterSpacing:0.8}}>Upset Bids</Text>
+                </View>
+                <View style={{flex:1, backgroundColor:C.surface, borderRadius:8, padding:10, alignItems:'center', borderWidth:1, borderColor:C.border}}>
+                  <Text style={{fontSize:18, fontWeight:'900', color:C.amber}}>{upcoming.length}</Text>
+                  <Text style={{fontSize:9, color:C.t3, textTransform:'uppercase', letterSpacing:0.8}}>Upcoming</Text>
+                </View>
+                <View style={{flex:1, backgroundColor:C.surface, borderRadius:8, padding:10, alignItems:'center', borderWidth:1, borderColor:C.border}}>
+                  <Text style={{fontSize:18, fontWeight:'900', color:C.teal}}>{props.length}</Text>
+                  <Text style={{fontSize:9, color:C.t3, textTransform:'uppercase', letterSpacing:0.8}}>Total</Text>
+                </View>
+              </View>
+
+              {/* Live deals for this county */}
+              {props.length > 0 && (
+                <View style={{marginTop:12}}>
+                  <Text style={{fontSize:9, color:C.t3, fontWeight:'800', letterSpacing:1, textTransform:'uppercase', marginBottom:8}}>LIVE DEALS</Text>
+                  {props.slice(0, 3).map(p => {
+                    const cl = classify(p.arv, p.bid||1, p.rehab);
+                    return (
+                      <TouchableOpacity key={p.id} style={{flexDirection:'row', alignItems:'center', paddingVertical:8, borderTopWidth:1, borderTopColor:C.border, gap:10}}
+                        onPress={()=>{ setDetail(p); navigate('detail'); }} activeOpacity={0.75}>
+                        <View style={{width:8, height:8, borderRadius:4, backgroundColor:cl.c, flexShrink:0}}/>
+                        <View style={{flex:1}}>
+                          <Text style={{fontSize:12, fontWeight:'700', color:C.t1}} numberOfLines={1}>{p.address}</Text>
+                          <Text style={{fontSize:10, color:C.t3}}>{p.status}</Text>
+                        </View>
+                        <Text style={{fontSize:12, fontWeight:'700', color:p.bid?C.teal:C.amber}}>{p.bid?f$(p.bid):'TBD'}</Text>
+                        <Text style={{fontSize:16, color:C.t3}}>›</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  {props.length > 3 && (
+                    <TouchableOpacity onPress={()=>navigate('deals')} style={{paddingTop:8}}>
+                      <Text style={{fontSize:11, color:C.gold, fontWeight:'700', textAlign:'center'}}>+ {props.length - 3} more → View All</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+
+              {props.length === 0 && (
+                <View style={{marginTop:12, padding:12, backgroundColor:C.surface, borderRadius:8, borderWidth:1, borderColor:C.border}}>
+                  <Text style={{fontSize:12, color:C.t3, textAlign:'center'}}>No properties in database yet for {area.county}, {area.state}</Text>
+                  <Text style={{fontSize:11, color:C.t3, textAlign:'center', marginTop:4}}>Add deals in the Deals tab or check back after data update</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        );
+      })}
+
+      {/* Add new area */}
+      {!showAdd ? (
+        <TouchableOpacity onPress={()=>setShowAdd(true)}
+          style={{marginHorizontal:16, marginTop:16, backgroundColor:C.card, borderRadius:12, borderWidth:1.5, borderColor:C.gold+'44', borderStyle:'dashed', padding:18, alignItems:'center', flexDirection:'row', justifyContent:'center', gap:10}}>
+          <Text style={{fontSize:22, color:C.gold}}>＋</Text>
+          <Text style={{fontSize:14, fontWeight:'700', color:C.gold}}>Add Focus Area</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={{marginHorizontal:16, marginTop:16, backgroundColor:C.card, borderRadius:12, borderWidth:1, borderColor:C.gold+'55', padding:16}}>
+          <Text style={{fontSize:11, fontWeight:'800', color:C.gold, letterSpacing:1.5, textTransform:'uppercase', marginBottom:14}}>ADD FOCUS AREA</Text>
+          <Text style={{fontSize:10, color:C.t3, textTransform:'uppercase', letterSpacing:1, marginBottom:6}}>County Name *</Text>
+          <TextInput value={newCounty} onChangeText={setNewCounty} placeholder="e.g. Mecklenburg" placeholderTextColor={C.t3}
+            style={{backgroundColor:C.surface, borderRadius:8, borderWidth:1, borderColor:C.border, paddingHorizontal:14, paddingVertical:11, color:C.t1, fontSize:15, marginBottom:12}}/>
+          <Text style={{fontSize:10, color:C.t3, textTransform:'uppercase', letterSpacing:1, marginBottom:6}}>State (2-letter) *</Text>
+          <TextInput value={newState} onChangeText={setNewState} placeholder="e.g. NC" placeholderTextColor={C.t3} maxLength={2} autoCapitalize="characters"
+            style={{backgroundColor:C.surface, borderRadius:8, borderWidth:1, borderColor:C.border, paddingHorizontal:14, paddingVertical:11, color:C.t1, fontSize:15, marginBottom:12}}/>
+          <Text style={{fontSize:10, color:C.t3, textTransform:'uppercase', letterSpacing:1, marginBottom:6}}>Notes (optional)</Text>
+          <TextInput value={newNote} onChangeText={setNewNote} placeholder="e.g. Source, attorney contact..." placeholderTextColor={C.t3}
+            style={{backgroundColor:C.surface, borderRadius:8, borderWidth:1, borderColor:C.border, paddingHorizontal:14, paddingVertical:11, color:C.t1, fontSize:14, marginBottom:16}}/>
+          <View style={{flexDirection:'row', gap:10}}>
+            <TouchableOpacity onPress={()=>{setShowAdd(false);setNewCounty('');setNewState('');setNewNote('');}}
+              style={{flex:1, backgroundColor:C.surface, borderRadius:8, borderWidth:1, borderColor:C.border, padding:12, alignItems:'center'}}>
+              <Text style={{fontSize:14, fontWeight:'700', color:C.t3}}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={addArea}
+              style={{flex:2, backgroundColor:C.gold, borderRadius:8, padding:12, alignItems:'center', opacity:(!newCounty.trim()||!newState.trim())?0.4:1}}>
+              <Text style={{fontSize:14, fontWeight:'800', color:C.bg}}>Add Focus Area</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Tips */}
+      <View style={{marginHorizontal:16, marginTop:20, backgroundColor:C.blueDim, borderRadius:10, borderWidth:1, borderColor:C.blue+'33', padding:14}}>
+        <Text style={{fontSize:10, fontWeight:'800', color:C.blue, letterSpacing:1, textTransform:'uppercase', marginBottom:6}}>💡 HOW FOCUS AREAS WORK</Text>
+        <Text style={{fontSize:12, color:C.t2, lineHeight:18}}>
+          Add any county/state where you actively invest. The Deals tab has a "Focus NC" filter that shows only these areas. Focus properties are highlighted with a gold border in all lists.
+          {'\n\n'}For NC counties, Hutchens Law Firm covers most bank FC sales statewide. For tax sales, check each county's tax department site or call the county clerk directly.
+        </Text>
+      </View>
+    </ScrollView>
+  );
+}
+
+// ─── ROOT APP ─────────────────────────────────────────────────────────────────
+export default function App(){
+  const [screen,setScreen]=useState('dashboard');
+  const [detail,setDetail]=useState(null);
+  const [pipeline,setPipeline]=useState({});
+
+  const TABS=[
+    {id:'dashboard',emoji:'⊞',label:'Dashboard'},
+    {id:'deals',    emoji:'🏚',label:'Deals'},
+    {id:'focus',    emoji:'📍',label:'Focus'},
+    {id:'pipeline', emoji:'⋯',label:'Pipeline'},
+    {id:'sources',  emoji:'⊕',label:'Sources'},
+  ];
+  const activeTab=screen==='detail'?'deals':screen;
+
+  const renderScreen=()=>{
+    if(screen==='detail'&&detail)return<DetailScreen prop={detail} goBack={()=>setScreen('deals')} pipeline={pipeline} setPipeline={setPipeline}/>;
+    if(screen==='deals')   return<DealsScreen    navigate={setScreen} setDetail={setDetail} pipeline={pipeline}/>;
+    if(screen==='focus')   return<FocusScreen    navigate={setScreen} setDetail={setDetail} pipeline={pipeline}/>;
+    if(screen==='pipeline')return<PipelineScreen navigate={setScreen} setDetail={setDetail} pipeline={pipeline}/>;
+    if(screen==='sources') return<SourcesScreen/>;
+    return<DashboardScreen navigate={setScreen} setDetail={setDetail}/>;
+  };
+
+  return(
+    <SafeAreaProvider>
+      <SafeAreaView style={{flex:1,backgroundColor:C.bg}} edges={['top','bottom']}>
+        <View style={{flex:1}}>{renderScreen()}</View>
+
+        {/* ── BOTTOM NAV ── */}
+        <View style={{
+          backgroundColor:C.navBg,
+          borderTopWidth:2,
+          borderTopColor:C.navBorder,
+          paddingTop:12,
+          paddingBottom:8,
+          flexDirection:'row',
+          minHeight:62,
+        }}>
+          {TABS.map(tab=>{
+            const active=activeTab===tab.id;
+            return(
+              <TouchableOpacity
+                key={tab.id}
+                style={{flex:1,alignItems:'center',justifyContent:'center',gap:3}}
+                onPress={()=>setScreen(tab.id)}
+                activeOpacity={0.6}
+              >
+                {active&&<View style={{position:'absolute',top:-12,width:36,height:3,backgroundColor:C.gold,borderRadius:2}}/>}
+                <Text style={{fontSize:22,opacity:active?1:0.5}}>{tab.emoji}</Text>
+                <Text style={{
+                  fontSize:11,
+                  fontWeight:active?'800':'500',
+                  color:active?C.navActive:C.navInactive,
+                  letterSpacing:0.2,
+                }}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </SafeAreaView>
+    </SafeAreaProvider>
+  );
+}
